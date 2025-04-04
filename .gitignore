@@ -1,0 +1,18 @@
+# General Node.js exclusions
+node_modules/
+*.log
+.env
+.env.local
+.env.development
+.env.production
+dist/
+
+# Frontend (Next.js)
+frontend/.next/
+frontend/out/
+frontend/build/
+
+# Backend (Node.js)
+backend/build/          # If you use a build step (e.g., TypeScript)
+backend/*.log          # Logs specific to backend
+backend/data/*.sqlite  # If you use a local database file
