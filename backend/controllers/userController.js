@@ -13,8 +13,24 @@ const loginUser = async (req, res) => {
         return res.status(401).json({ error: "Invalid credentials" });
     }
 
-    const token = jwt.sign({ username: user.username }, process.env.JWT_SECRET, { expiresIn: "1h" });
-    res.json({ token });
+    const token = jwt.sign(
+        { username: user.username },
+        process.env.JWT_SECRET,
+        { expiresIn: "24h" } // Increased from 1h to 24h
+    );
+    
+    const refreshToken = jwt.sign(
+        { userId: user.id, username: user.username },
+        process.env.REFRESH_TOKEN_SECRET,
+        { expiresIn: '7d' }
+    );
+
+    res.json({
+        token,
+        refreshToken,
+        userId: user.id,
+        username: user.username
+    });
 };
 
 const registerUser = async (req, res) => {
@@ -51,4 +67,28 @@ const authenticateToken = (req, res, next) => {
     });
 };
 
-module.exports = { loginUser, registerUser, logoutUser, authenticateToken };
+const refreshToken = async (req, res) => {
+    try {
+        const { refreshToken } = req.body;
+        if (!refreshToken) {
+            return res.status(400).json({ error: 'Refresh token required' });
+        }
+
+        // Verify refresh token
+        const decoded = jwt.verify(refreshToken, process.env.REFRESH_TOKEN_SECRET);
+        
+        // Generate new access token
+        const newAccessToken = jwt.sign(
+            { userId: decoded.userId, email: decoded.email },
+            process.env.JWT_SECRET,
+            { expiresIn: '1h' } // Longer expiry
+        );
+
+        res.json({ token: newAccessToken });
+    } catch (error) {
+        console.error('Token refresh failed:', error);
+        res.status(401).json({ error: 'Invalid refresh token' });
+    }
+};
+
+module.exports = { loginUser, registerUser, logoutUser, authenticateToken, refreshToken };

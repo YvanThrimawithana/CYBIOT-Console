@@ -4,7 +4,7 @@ import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { theme } from "../styles/theme";
 
-const Login = () => {
+const Login = ({ setIsAuthenticated }) => {
     const navigate = useNavigate();
     const [username, setUsername] = useState("");
     const [password, setPassword] = useState("");
@@ -30,8 +30,15 @@ const Login = () => {
                 alert("Registration successful! Please log in.");
                 setIsRegistering(false);
             } else {
+                // Store all tokens and user info
                 localStorage.setItem("token", data.token);
-                navigate("/dashboard");
+                localStorage.setItem("refreshToken", data.refreshToken);
+                localStorage.setItem("userId", data.userId);
+                localStorage.setItem("username", data.username);
+                
+                setIsAuthenticated(true);
+                // Force a page reload to ensure all components pick up the new auth state
+                window.location.href = '/dashboard';
             }
         } catch (error) {
             alert(error.message);

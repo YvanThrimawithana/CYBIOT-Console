@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import Navbar from './components/Navbar';
 import ProtectedRoute from './components/ProtectedRoute';
 import { routes } from './routes/routes';
+import FirmwareProfile from './pages/FirmwareProfile';
 
 const App = () => {
     const isAuthenticated = localStorage.getItem('token');
@@ -28,6 +29,7 @@ const App = () => {
                     />
                 ))}
                 
+                <Route path="/firmware/:id" element={<FirmwareProfile />} />
                 <Route path="*" element={<Navigate to="/dashboard" replace />} />
             </Routes>
         </BrowserRouter>

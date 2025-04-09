@@ -13,51 +13,53 @@ class AnalysisService {
         try {
             console.log(`Sending firmware to analysis server: ${config.analysis.serverUrl}`);
 
-            // Create form data
             const formData = new FormData();
             formData.append('firmware', firmwareBuffer, { filename });
 
-            const response = await axios.post(`${config.analysis.serverUrl}`, formData, {
+            const response = await axios.post(config.analysis.serverUrl, formData, {
                 headers: {
                     ...formData.getHeaders(),
-                    'X-API-Key': config.analysis.apiKey
+                    'X-API-Key': config.analysis.apiKey,
+                    'Accept': 'application/json'
                 },
-                responseType: 'stream',
-                timeout: config.analysis.timeout,
-                maxContentLength: Infinity,
-                maxBodyLength: Infinity
+                timeout: config.analysis.timeout
             });
 
-            if (response.status === 200) {
-                // Get filename from response headers or use default
-                const contentDisp = response.headers['content-disposition'];
-                let resultFilename = 'analysis_results.json';
-                if (contentDisp && contentDisp.includes('filename=')) {
-                    resultFilename = contentDisp.split('filename=')[1].replace(/"/g, '');
-                }
+            // Generate result filename
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '');
+            const resultFilename = `${filename.replace('.bin', '')}_${timestamp}_results.json`;
+            const resultsDir = path.join(__dirname, '../data/analysis_results');
+            await fs.mkdir(resultsDir, { recursive: true });
+            const resultPath = path.join(resultsDir, resultFilename);
 
-                // Create results directory if it doesn't exist
-                const resultsDir = path.join(__dirname, '../data/analysis_results');
-                await fs.mkdir(resultsDir, { recursive: true });
-
-                // Save response stream to file
-                const resultPath = path.join(resultsDir, resultFilename);
-                const writer = await fs.open(resultPath, 'w');
-                
-                return new Promise((resolve, reject) => {
-                    response.data.pipe(writer.createWriteStream());
-                    response.data.on('end', () => {
-                        console.log(`Analysis complete! Results saved to: ${resultPath}`);
-                        resolve({ resultPath, resultFilename });
-                    });
-                    response.data.on('error', reject);
+            // Handle both JSON and text responses
+            let resultContent;
+            if (typeof response.data === 'string') {
+                resultContent = JSON.stringify({
+                    static: {
+                        analysis_message: [{
+                            message: response.data,
+                            severity: 'INFO'
+                        }]
+                    },
+                    dynamic: {
+                        open_ports: [],
+                        fuzzing_results: [],
+                        timeline: []
+                    }
                 });
             } else {
-                throw new Error(`Server returned status code ${response.status}`);
+                resultContent = JSON.stringify(response.data);
             }
+
+            // Save results
+            await fs.writeFile(resultPath, resultContent);
+            console.log(`Analysis complete! Results saved to: ${resultPath}`);
+            
+            return { resultPath, resultFilename };
         } catch (error) {
-            console.error('Analysis failed:', error);
-            throw new Error(`Analysis failed: ${error.message}`);
+            console.error('Analysis service error:', error);
+            throw new Error(`Analysis service error: ${error.message}`);
         }
     }
 }

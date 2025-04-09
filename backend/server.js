@@ -10,11 +10,15 @@ require("dotenv").config();
 const app = express();
 app.use(cors({
     origin: 'http://localhost:3000', // Your frontend URL
-    methods: ['GET', 'POST', 'DELETE', 'PUT'],
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     credentials: true,
-    allowedHeaders: ['Content-Type'],
+    allowedHeaders: ['Content-Type', 'Authorization'], // Add Authorization
     exposedHeaders: ['Content-Disposition']
 }));
+
+// Add preflight handling
+app.options('*', cors());
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 

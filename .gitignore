@@ -1,18 +1,63 @@
-# General Node.js exclusions
+# Dependencies
 node_modules/
-*.log
+.pnp/
+.pnp.js
+
+# Environment files
 .env
 .env.local
 .env.development
+.env.test
 .env.production
-dist/
 
-# Frontend (Next.js)
+# Next.js specific
 frontend/.next/
 frontend/out/
-frontend/build/
+frontend/.next
+frontend/build
+frontend/.vercel
+.vercel
 
-# Backend (Node.js)
-backend/build/          # If you use a build step (e.g., TypeScript)
-backend/*.log          # Logs specific to backend
-backend/data/*.sqlite  # If you use a local database file
+# Backend specific
+backend/data/firmware_files/
+backend/data/analysis_results/
+backend/data/*.json
+backend/logs/
+backend/uploads/
+
+# Debug logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.log
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+*.pem
+
+# Testing
+coverage/
+.nyc_output/
+
+# Production build
+dist/
+build/
+
+# Temporary files
+*.tmp
+.temp/
+temp/
+
+# Cache directories
+.npm
+.eslintcache
+.cache/
+.parcel-cache/
+
+# System Files
+Thumbs.db
+.DS_Store
