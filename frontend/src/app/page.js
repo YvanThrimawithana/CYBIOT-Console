@@ -67,7 +67,7 @@ const App = () => {
                                 path="/logs" 
                                 element={
                                     isAuthenticated ? 
-                                    <TrafficLogs /> : 
+                                    <TrafficLogs unifiedView={true} /> : 
                                     <Navigate to="/login" />
                                 } 
                             />

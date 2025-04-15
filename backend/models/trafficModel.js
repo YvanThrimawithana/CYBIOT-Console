@@ -47,7 +47,12 @@ const writeLogs = (logs) => {
 // Get traffic logs for a given device by IP address
 const getTrafficLogs = (ip) => {
     const logs = readLogs();
-    return logs[ip] || [];
+    // If IP is provided, return logs for that IP, otherwise return all logs
+    if (ip) {
+        return logs[ip] || [];
+    }
+    // Return all logs combined when no IP is specified
+    return Object.values(logs).reduce((allLogs, ipLogs) => allLogs.concat(ipLogs), []);
 };
 
 // Add a new traffic log for a device
@@ -90,12 +95,12 @@ const addTrafficLog = (ip, log) => {
 
 // Get a summary of traffic logs
 const getTrafficSummary = () => {
-    const logs = readLogs();
-    return Object.keys(logs).map(ip => ({
-        ip,
-        logCount: logs[ip].length,
-        lastUpdate: logs[ip].length > 0 ? logs[ip][logs[ip].length - 1].timestamp : null
-    }));
+    try {
+        return readLogs();
+    } catch (error) {
+        console.error("Error getting traffic summary:", error);
+        return {};
+    }
 };
 
 module.exports = {

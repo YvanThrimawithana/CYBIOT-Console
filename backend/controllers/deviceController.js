@@ -1,7 +1,7 @@
 const { getAllDevices, saveDevice, updateDeviceStatus, deleteDeviceFromStorage } = require("../models/deviceModel");
 const mqtt = require("mqtt");
 
-const mqttClient = mqtt.connect("mqtt://192.168.1.10:1883");
+const mqttClient = mqtt.connect("mqtt://192.168.1.7:1883");
 const mqttTopic = "cybiot/device/heartbeat";
 
 const lastHeartbeats = {}; // Track heartbeat timestamp by IP address
