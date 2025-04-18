@@ -1,4 +1,7 @@
 const { getTrafficLogs, addTrafficLog, getTrafficSummary: getTrafficLogsSummary } = require("../models/trafficModel");
+const { getAllRules, getRuleById, createRule, updateRule, deleteRule } = require("../models/alertRulesModel");
+const { getAlerts, updateAlertStatus } = require("../models/alertsModel");
+const { evaluateLogs } = require("../utils/ruleEvaluator");
 const { getAllDevices } = require("../models/deviceModel");
 const fs = require('fs');
 const path = require('path');
@@ -33,7 +36,19 @@ const getTrafficLogsForDevice = async (req, res) => {
 
 const addTrafficLogForDevice = (ip, log) => {
     try {
-        return addTrafficLog(ip, log);
+        // Save the log first
+        const saved = addTrafficLog(ip, log);
+        
+        if (saved) {
+            // Evaluate this log against rules in real-time
+            const matchedRules = evaluateLogs([log], ip);
+            
+            if (matchedRules.length > 0) {
+                console.log(`🚨 Generated ${matchedRules.length} alerts for device ${ip}`);
+            }
+        }
+        
+        return saved;
     } catch (error) {
         console.error("Error adding traffic log:", error);
         return false;
@@ -400,6 +415,229 @@ const getAllLogsWithoutFiltering = async (req, res) => {
     }
 };
 
+// Alert Rules Management
+const getAllAlertRules = async (req, res) => {
+    try {
+        const rules = getAllRules();
+        res.json({ success: true, rules });
+    } catch (error) {
+        console.error("Error getting alert rules:", error);
+        res.status(500).json({ success: false, error: "Failed to get alert rules" });
+    }
+};
+
+const getAlertRuleById = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const rule = getRuleById(id);
+        
+        if (rule) {
+            res.json({ success: true, rule });
+        } else {
+            res.status(404).json({ success: false, error: "Rule not found" });
+        }
+    } catch (error) {
+        console.error("Error getting alert rule:", error);
+        res.status(500).json({ success: false, error: "Failed to get alert rule" });
+    }
+};
+
+const createAlertRule = async (req, res) => {
+    try {
+        const result = createRule(req.body);
+        
+        if (result.success) {
+            res.status(201).json({ success: true, rule: result.rule });
+        } else {
+            res.status(400).json({ success: false, error: result.error });
+        }
+    } catch (error) {
+        console.error("Error creating alert rule:", error);
+        res.status(500).json({ success: false, error: "Failed to create alert rule" });
+    }
+};
+
+const updateAlertRule = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const result = updateRule(id, req.body);
+        
+        if (result.success) {
+            res.json({ success: true, rule: result.rule });
+        } else {
+            if (result.error === "Rule not found") {
+                res.status(404).json({ success: false, error: result.error });
+            } else {
+                res.status(400).json({ success: false, error: result.error });
+            }
+        }
+    } catch (error) {
+        console.error("Error updating alert rule:", error);
+        res.status(500).json({ success: false, error: "Failed to update alert rule" });
+    }
+};
+
+const deleteAlertRule = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const result = deleteRule(id);
+        
+        if (result.success) {
+            res.json({ success: true });
+        } else {
+            res.status(404).json({ success: false, error: result.error });
+        }
+    } catch (error) {
+        console.error("Error deleting alert rule:", error);
+        res.status(500).json({ success: false, error: "Failed to delete alert rule" });
+    }
+};
+
+// Alerts Management
+const getActiveAlerts = (req, res) => {
+    try {
+        // Get alerts from the alerts model
+        const fs = require('fs');
+        const path = require('path');
+        const alertsPath = path.join(__dirname, '../data/alerts.json');
+        
+        // Ensure the file exists
+        if (!fs.existsSync(alertsPath)) {
+            return res.status(200).json({
+                success: true,
+                alerts: []
+            });
+        }
+        
+        // Read alerts from file
+        const alertsData = fs.readFileSync(alertsPath, 'utf8');
+        const alerts = JSON.parse(alertsData || '[]');
+        
+        // Filter active alerts (not resolved)
+        const activeAlerts = Array.isArray(alerts) 
+            ? alerts.filter(alert => alert.status !== 'RESOLVED')
+            : [];
+            
+        return res.status(200).json({
+            success: true,
+            alerts: activeAlerts
+        });
+    } catch (error) {
+        console.error('Error getting active alerts:', error);
+        return res.status(500).json({
+            success: false,
+            error: 'Failed to get active alerts'
+        });
+    }
+};
+
+const getAllSystemAlerts = (req, res) => {
+    try {
+        // Get alerts from the alerts model
+        const fs = require('fs');
+        const path = require('path');
+        const alertsPath = path.join(__dirname, '../data/alerts.json');
+        
+        // Ensure the file exists
+        if (!fs.existsSync(alertsPath)) {
+            return res.status(200).json({
+                success: true,
+                alerts: [],
+                alertsByStatus: {
+                    NEW: 0,
+                    ACKNOWLEDGED: 0,
+                    RESOLVED: 0
+                }
+            });
+        }
+        
+        // Read alerts from file
+        const alertsData = fs.readFileSync(alertsPath, 'utf8');
+        const alerts = JSON.parse(alertsData || '[]');
+        
+        // Make sure we have an array
+        const alertsArray = Array.isArray(alerts) ? alerts : [];
+        
+        // Count alerts by status
+        const alertsByStatus = {
+            NEW: 0,
+            ACKNOWLEDGED: 0,
+            RESOLVED: 0
+        };
+        
+        alertsArray.forEach(alert => {
+            if (alert.status && alertsByStatus.hasOwnProperty(alert.status)) {
+                alertsByStatus[alert.status]++;
+            }
+        });
+        
+        return res.status(200).json({
+            success: true,
+            alerts: alertsArray,
+            alertsByStatus
+        });
+    } catch (error) {
+        console.error('Error getting all system alerts:', error);
+        return res.status(500).json({
+            success: false,
+            error: 'Failed to get system alerts'
+        });
+    }
+};
+
+const updateAlertStatusHandler = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { status } = req.body;
+        
+        if (!status || !['NEW', 'ACKNOWLEDGED', 'RESOLVED'].includes(status)) {
+            return res.status(400).json({ 
+                success: false, 
+                error: "Invalid status. Must be one of: NEW, ACKNOWLEDGED, RESOLVED" 
+            });
+        }
+        
+        const result = updateAlertStatus(id, status);
+        
+        if (result.success) {
+            res.json({ success: true, alert: result.alert });
+        } else {
+            res.status(404).json({ success: false, error: result.error });
+        }
+    } catch (error) {
+        console.error("Error updating alert status:", error);
+        res.status(500).json({ success: false, error: "Failed to update alert status" });
+    }
+};
+
+// Evaluate existing logs against the rules (for testing or after adding new rules)
+const evaluateExistingLogs = async (req, res) => {
+    try {
+        const logs = await getTrafficLogsSummary();
+        let totalAlerts = 0;
+        
+        // Process each device's logs
+        for (const [deviceIp, deviceLogs] of Object.entries(logs)) {
+            if (Array.isArray(deviceLogs) && deviceLogs.length > 0) {
+                // Evaluate all logs for this device
+                const generatedAlerts = evaluateLogs(deviceLogs, deviceIp);
+                totalAlerts += generatedAlerts.length;
+            }
+        }
+        
+        res.json({ 
+            success: true, 
+            message: `Evaluated logs and generated ${totalAlerts} alerts` 
+        });
+    } catch (error) {
+        console.error("Error evaluating existing logs:", error);
+        res.status(500).json({ 
+            success: false, 
+            error: "Failed to evaluate logs" 
+        });
+    }
+};
+
 module.exports = {
     getTrafficLogsForDevice,
     getAllTrafficLogs,
@@ -409,5 +647,16 @@ module.exports = {
     getDeviceMetrics,
     getUserActivity,
     getNetworkTraffic,
-    getAllLogsWithoutFiltering
+    getAllLogsWithoutFiltering,
+    // New functions for alert rules
+    getAllAlertRules,
+    getAlertRuleById,
+    createAlertRule,
+    updateAlertRule,
+    deleteAlertRule,
+    // New functions for alerts management
+    getActiveAlerts,
+    getAllSystemAlerts,
+    updateAlertStatusHandler,
+    evaluateExistingLogs
 };

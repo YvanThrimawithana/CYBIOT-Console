@@ -4,6 +4,7 @@ const userRoutes = require("./routes/userRoutes");
 const deviceRoutes = require("./routes/deviceRoutes");
 const trafficLogRoutes = require("./routes/trafficRoutes");
 const firmwareRoute = require("./routes/firmwareRoute");
+const alertRoutes = require("./routes/alertRoutes"); // Import alert routes
 const { startTrafficMonitoring } = require("./utils/trafficMonitor"); // Import traffic monitoring
 require("dotenv").config();
 
@@ -25,7 +26,8 @@ app.use(express.urlencoded({ extended: true }));
 app.use("/api/users", userRoutes);
 app.use("/api/devices", deviceRoutes);
 app.use("/api/traffic", trafficLogRoutes);
-app.use("/api/firmware", firmwareRoute ); // Register traffic log routes
+app.use("/api/firmware", firmwareRoute);
+app.use("/api/alerts", alertRoutes); // Register alert routes
 
 const PORT = process.env.PORT || 5000;
 

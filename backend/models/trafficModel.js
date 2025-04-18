@@ -1,5 +1,6 @@
 const fs = require("fs");
 const path = require("path");
+const { processLog } = require("../utils/alertEngine"); // Import the alert engine
 
 // Define the paths
 const dataDir = path.join(__dirname, "../data");
@@ -69,6 +70,12 @@ const addTrafficLog = (ip, log) => {
         if (!log.timestamp) {
             log.timestamp = new Date().toISOString();
         }
+
+        // Add deviceIp to log object for alert processing
+        log.deviceIp = ip;
+
+        // Process the log against alert rules
+        processLog(ip, log);
 
         // Limit the number of logs per device (optional, prevent file from growing too large)
         const MAX_LOGS_PER_DEVICE = 1000;

@@ -8,6 +8,8 @@ import DeviceConsole from "../pages/DeviceConsole";
 import Login from "../pages/Login";
 import Dashboard from "../pages/DashBoard";
 import TrafficLogs from "../pages/TrafficLogs";
+import AlertRules from "../pages/AlertRules";
+import AlertOffenses from "../pages/AlertOffenses";
 import FirmwareManagement from "../pages/FirmwareManagement";
 import FirmwareProfile from "../pages/FirmwareProfile";
 import "./globals.css";
@@ -68,6 +70,22 @@ const App = () => {
                                 element={
                                     isAuthenticated ? 
                                     <TrafficLogs unifiedView={true} /> : 
+                                    <Navigate to="/login" />
+                                } 
+                            />
+                            <Route 
+                                path="/alert-rules" 
+                                element={
+                                    isAuthenticated ? 
+                                    <AlertRules /> : 
+                                    <Navigate to="/login" />
+                                } 
+                            />
+                            <Route 
+                                path="/offenses" 
+                                element={
+                                    isAuthenticated ? 
+                                    <AlertOffenses /> : 
                                     <Navigate to="/login" />
                                 } 
                             />

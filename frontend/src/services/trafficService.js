@@ -49,3 +49,161 @@ export const getNewTrafficLogs = async (deviceId, timestamp = null) => {
         throw error;
     }
 };
+
+// New functions for alert rules
+export const getAllAlertRules = async () => {
+    try {
+        const response = await fetch('http://localhost:5000/api/traffic/rules');
+        if (!response.ok) throw new Error('Failed to fetch alert rules');
+        return await response.json();
+    } catch (error) {
+        console.error('Error fetching alert rules:', error);
+        throw error;
+    }
+};
+
+export const getAlertRule = async (ruleId) => {
+    try {
+        const response = await fetch(`http://localhost:5000/api/traffic/rules/${ruleId}`);
+        if (!response.ok) throw new Error('Failed to fetch alert rule');
+        return await response.json();
+    } catch (error) {
+        console.error('Error fetching alert rule:', error);
+        throw error;
+    }
+};
+
+export const createAlertRule = async (ruleData) => {
+    try {
+        const response = await fetch('http://localhost:5000/api/traffic/rules', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(ruleData),
+        });
+        if (!response.ok) throw new Error('Failed to create alert rule');
+        return await response.json();
+    } catch (error) {
+        console.error('Error creating alert rule:', error);
+        throw error;
+    }
+};
+
+export const updateAlertRule = async (ruleId, ruleData) => {
+    try {
+        const response = await fetch(`http://localhost:5000/api/traffic/rules/${ruleId}`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(ruleData),
+        });
+        if (!response.ok) throw new Error('Failed to update alert rule');
+        return await response.json();
+    } catch (error) {
+        console.error('Error updating alert rule:', error);
+        throw error;
+    }
+};
+
+export const deleteAlertRule = async (ruleId) => {
+    try {
+        const response = await fetch(`http://localhost:5000/api/traffic/rules/${ruleId}`, {
+            method: 'DELETE',
+        });
+        if (!response.ok) throw new Error('Failed to delete alert rule');
+        return await response.json();
+    } catch (error) {
+        console.error('Error deleting alert rule:', error);
+        throw error;
+    }
+};
+
+// New functions for alerts
+export const getActiveAlerts = async (deviceId = null, timestamp = null) => {
+    try {
+        let url = 'http://localhost:5000/api/traffic/active-alerts';
+        if (deviceId && deviceId !== 'all') {
+            url += `/${deviceId}`;
+        }
+        
+        const queryParams = new URLSearchParams();
+        if (timestamp) {
+            queryParams.append('since', timestamp);
+        }
+        
+        if (queryParams.toString()) {
+            url += `?${queryParams.toString()}`;
+        }
+        
+        const response = await fetch(url);
+        if (!response.ok) throw new Error('Failed to fetch active alerts');
+        return await response.json();
+    } catch (error) {
+        console.error('Error fetching active alerts:', error);
+        throw error;
+    }
+};
+
+export const getAllSystemAlerts = async (filters = {}) => {
+    try {
+        let url = 'http://localhost:5000/api/traffic/system-alerts';
+        
+        // Add query parameters if provided
+        const queryParams = new URLSearchParams();
+        
+        if (filters.status) {
+            queryParams.append('status', filters.status);
+        }
+        
+        if (filters.since) {
+            queryParams.append('since', filters.since);
+        }
+        
+        if (filters.severity) {
+            queryParams.append('severity', filters.severity);
+        }
+        
+        if (queryParams.toString()) {
+            url += `?${queryParams.toString()}`;
+        }
+        
+        const response = await fetch(url);
+        if (!response.ok) throw new Error('Failed to fetch system alerts');
+        return await response.json();
+    } catch (error) {
+        console.error('Error fetching system alerts:', error);
+        throw error;
+    }
+};
+
+export const updateAlertStatus = async (alertId, newStatus) => {
+    try {
+        const response = await fetch(`http://localhost:5000/api/traffic/alert-status/${alertId}`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ status: newStatus }),
+        });
+        if (!response.ok) throw new Error('Failed to update alert status');
+        return await response.json();
+    } catch (error) {
+        console.error('Error updating alert status:', error);
+        throw error;
+    }
+};
+
+export const evaluateExistingLogs = async () => {
+    try {
+        const response = await fetch('http://localhost:5000/api/traffic/evaluate-logs', {
+            method: 'POST',
+        });
+        if (!response.ok) throw new Error('Failed to evaluate logs');
+        return await response.json();
+    } catch (error) {
+        console.error('Error evaluating logs:', error);
+        throw error;
+    }
+};

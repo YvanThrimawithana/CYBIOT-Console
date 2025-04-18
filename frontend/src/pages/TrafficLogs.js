@@ -3,8 +3,8 @@ import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { theme } from "../styles/theme";
-import { RiAlertFill, RiUser3Fill, RiShieldFill, RiDatabase2Fill, RiSearchLine, RiFilter2Line } from 'react-icons/ri';
-import { getDeviceTraffic, getUnifiedTrafficLogs, getNewTrafficLogs } from "../services/trafficService";
+import { RiAlertFill, RiUser3Fill, RiShieldFill, RiDatabase2Fill, RiSearchLine, RiFilter2Line, RiAlarmWarningLine, RiNotification3Line, RiArrowRightSLine } from 'react-icons/ri';
+import { getDeviceTraffic, getUnifiedTrafficLogs, getNewTrafficLogs, getActiveAlerts } from "../services/trafficService";
 
 const TrafficLogs = ({ unifiedView = false }) => {
     const { ip } = useParams();
@@ -18,6 +18,7 @@ const TrafficLogs = ({ unifiedView = false }) => {
     const [isInitialLoading, setIsInitialLoading] = useState(true);
     const [error, setError] = useState(null);
     const [deviceInfo, setDeviceInfo] = useState({});
+    const [activeAlerts, setActiveAlerts] = useState([]);
     
     // Search and filter state
     const [searchQuery, setSearchQuery] = useState('');
@@ -143,6 +144,29 @@ const TrafficLogs = ({ unifiedView = false }) => {
                     clearInterval(pollingRef.current);
                 }
             };
+        }
+    }, [isInitialLoading, ip, unifiedView]);
+
+    // Get active alerts
+    useEffect(() => {
+        const fetchActiveAlerts = async () => {
+            try {
+                const deviceId = unifiedView ? 'all' : ip;
+                const response = await getActiveAlerts(deviceId);
+                if (response.success) {
+                    setActiveAlerts(response.alerts);
+                }
+            } catch (err) {
+                console.error("Error fetching active alerts:", err);
+                // Don't set error state to avoid disrupting UI
+            }
+        };
+
+        if (!isInitialLoading) {
+            fetchActiveAlerts();
+            // Polling for alerts every 10 seconds
+            const alertsInterval = setInterval(fetchActiveAlerts, 10000);
+            return () => clearInterval(alertsInterval);
         }
     }, [isInitialLoading, ip, unifiedView]);
 
@@ -889,7 +913,21 @@ const TrafficLogs = ({ unifiedView = false }) => {
                                 </p>
                             )}
                         </div>
-                        <div className="flex space-x-4">
+                        <div className="flex space-x-4 items-center">
+                            <div className="relative">
+                                <button
+                                    onClick={() => navigate('/alert-rules')}
+                                    className="flex items-center bg-gray-800 text-white px-4 py-2 rounded border border-gray-700"
+                                >
+                                    <RiAlarmWarningLine className="mr-2" />
+                                    Manage Alert Rules
+                                </button>
+                                {activeAlerts.length > 0 && (
+                                    <span className="absolute -top-2 -right-2 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
+                                        {activeAlerts.length}
+                                    </span>
+                                )}
+                            </div>
                             <select
                                 value={timeRange}
                                 onChange={(e) => setTimeRange(e.target.value)}
@@ -907,6 +945,62 @@ const TrafficLogs = ({ unifiedView = false }) => {
 
             {/* Main content */}
             <div className="max-w-7xl mx-auto p-6">
+                {/* Active alerts section - show only when there are alerts */}
+                {activeAlerts.length > 0 && !isInitialLoading && (
+                    <motion.div 
+                        initial={{ opacity: 0, y: -20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="bg-red-900/30 border border-red-700 rounded-lg p-4 mb-6"
+                    >
+                        <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-center">
+                                <RiNotification3Line className="text-red-500 text-xl mr-2" />
+                                <h3 className="text-lg font-bold text-white">Active Alerts</h3>
+                            </div>
+                            <button 
+                                onClick={() => navigate('/offenses')}
+                                className="text-sm text-red-400 hover:text-red-300"
+                            >
+                                View All Offenses
+                            </button>
+                        </div>
+                        <div className="space-y-2">
+                            {activeAlerts.slice(0, 3).map((alert) => (
+                                <div key={alert.id} className="bg-gray-800/50 p-3 rounded border border-red-900/50">
+                                    <div className="flex justify-between">
+                                        <span className="font-medium text-white">{alert.ruleName}</span>
+                                        <span className={`px-2 py-0.5 rounded-full text-xs ${
+                                            alert.severity === 'HIGH' ? 'bg-red-500/20 text-red-400' :
+                                            alert.severity === 'MEDIUM' ? 'bg-yellow-500/20 text-yellow-400' :
+                                            'bg-green-500/20 text-green-400'
+                                        }`}>
+                                            {alert.severity}
+                                        </span>
+                                    </div>
+                                    <p className="text-sm text-gray-300 mt-1">{alert.description}</p>
+                                    <p className="text-xs text-gray-400 mt-1">
+                                        Device: {alert.deviceIp} | {new Date(alert.timestamp).toLocaleString()}
+                                    </p>
+                                </div>
+                            ))}
+                            {activeAlerts.length > 3 && (
+                                <p className="text-center text-sm text-red-400">
+                                    +{activeAlerts.length - 3} more alerts
+                                </p>
+                            )}
+                        </div>
+                        <div className="flex justify-end mt-3">
+                            <button 
+                                onClick={() => navigate('/offenses')}
+                                className="bg-red-800/50 hover:bg-red-700/50 text-white px-3 py-1.5 rounded text-sm flex items-center"
+                            >
+                                Go to Security Offenses
+                                <RiArrowRightSLine className="ml-1" />
+                            </button>
+                        </div>
+                    </motion.div>
+                )}
+
                 {/* Initial loading placeholder */}
                 {isInitialLoading ? (
                     <div className="space-y-6">
