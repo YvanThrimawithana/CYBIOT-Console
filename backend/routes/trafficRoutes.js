@@ -8,17 +8,19 @@ const {
     getUserActivity,
     getNetworkTraffic,
     getAllLogsWithoutFiltering,
-    // New handler functions for alert rules
+    // Alert rules functions
     getAllAlertRules,
     getAlertRuleById,
     createAlertRule,
     updateAlertRule,
     deleteAlertRule,
-    // New handler functions for alerts
+    // Alerts management functions
     getActiveAlerts,
     getAllSystemAlerts,
     updateAlertStatusHandler,
-    evaluateExistingLogs
+    evaluateExistingLogs,
+    // CSV report generation
+    generateCSVReport
 } = require("../controllers/trafficController");
 
 const router = express.Router();
@@ -45,5 +47,8 @@ router.get("/system-alerts", getAllSystemAlerts);
 router.get("/active-alerts/:ip?", getActiveAlerts);
 router.put("/alert-status/:id", updateAlertStatusHandler);
 router.post("/evaluate-logs", evaluateExistingLogs);
+
+// CSV report generation route
+router.post("/generate-csv-report", generateCSVReport);
 
 module.exports = router;

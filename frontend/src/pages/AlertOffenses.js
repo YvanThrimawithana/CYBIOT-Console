@@ -6,13 +6,14 @@ import {
     RiAlertFill, RiFilter3Line, RiSearchLine, 
     RiCheckboxCircleLine, RiCloseCircleLine, 
     RiErrorWarningFill, RiArrowRightSLine, RiTimeLine,
-    RiCheckLine, RiEyeLine
+    RiCheckLine, RiEyeLine, RiFileDownloadLine
 } from "react-icons/ri";
 import { 
     getAllSystemAlerts, 
     updateAlertStatus,
     getAlertRule
 } from "../services/trafficService";
+import CSVReportModal from "../components/CSVReportModal";
 
 const AlertOffenses = () => {
     const navigate = useNavigate();
@@ -36,6 +37,9 @@ const AlertOffenses = () => {
         resolved: 0
     });
     const [alertsByDevice, setAlertsByDevice] = useState({});
+    
+    // Add state for CSV report modal
+    const [showReportModal, setShowReportModal] = useState(false);
     
     // Auto-refresh
     const [autoRefresh, setAutoRefresh] = useState(true);
@@ -320,6 +324,14 @@ const AlertOffenses = () => {
                             </p>
                         </div>
                         <div className="flex items-center space-x-3">
+                            {/* Add CSV Report Button */}
+                            <button 
+                                onClick={() => setShowReportModal(true)}
+                                className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded flex items-center"
+                            >
+                                <RiFileDownloadLine className="mr-2" />
+                                CSV Report
+                            </button>
                             <div className="bg-gray-800 text-white px-3 py-2 rounded-md flex items-center">
                                 <RiTimeLine className="mr-2" />
                                 <span>Auto-refresh in: {countdown}s</span>
@@ -781,6 +793,13 @@ const AlertOffenses = () => {
                         </div>
                     </div>
                 </motion.div>
+            )}
+
+            {/* Add CSV Report Modal */}
+            {showReportModal && (
+                <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 px-4">
+                    <CSVReportModal onClose={() => setShowReportModal(false)} />
+                </div>
             )}
         </div>
     );

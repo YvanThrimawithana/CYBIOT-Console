@@ -90,3 +90,14 @@ export const updateAlertStatus = async (id, status) => {
         return { success: false, error: error.message };
     }
 };
+
+// Generate and email CSV report of offenses
+export const generateOffenseReport = async (email) => {
+    try {
+        const response = await api.post("/alerts/generate-report", { email });
+        return response.data;
+    } catch (error) {
+        console.error("Error generating offense report:", error);
+        return { success: false, error: error.response?.data?.error || error.message };
+    }
+};

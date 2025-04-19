@@ -11,7 +11,8 @@ const {
     getAlertById,
     updateAlertStatus,
     getAlertStats,
-    getAlertsByDevice
+    getAlertsByDevice,
+    generateCSVReport
 } = require("../models/alertsModel");
 
 const router = express.Router();
@@ -121,6 +122,34 @@ router.patch("/alerts/:id/status", (req, res) => {
         res.json(result);
     } else {
         res.status(404).json(result);
+    }
+});
+
+// CSV Report generation route
+router.post("/generate-report", async (req, res) => {
+    try {
+        const { email } = req.body;
+        
+        if (!email) {
+            return res.status(400).json({ 
+                success: false, 
+                error: "Email address is required" 
+            });
+        }
+        
+        const result = await generateCSVReport(email);
+        
+        if (result.success) {
+            res.json(result);
+        } else {
+            res.status(400).json(result);
+        }
+    } catch (error) {
+        console.error("Error generating CSV report:", error);
+        res.status(500).json({ 
+            success: false, 
+            error: "Failed to generate report" 
+        });
     }
 });
 

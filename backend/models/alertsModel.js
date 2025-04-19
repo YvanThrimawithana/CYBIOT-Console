@@ -2,6 +2,8 @@ const fs = require("fs");
 const path = require("path");
 const { v4: uuidv4 } = require("uuid");
 const { sendAlertNotification, sendFollowupNotification } = require("../utils/emailService");
+const json2csv = require("json2csv").Parser;
+const nodemailer = require("nodemailer");
 
 // Define the paths
 const dataDir = path.join(__dirname, "../data");
@@ -350,11 +352,114 @@ const getAlertsByDevice = () => {
     }
 };
 
+// Generate and email a CSV report of all offense alerts
+const generateCSVReport = async (email) => {
+    try {
+        if (!email) {
+            return {
+                success: false,
+                error: "Email address is required"
+            };
+        }
+
+        const alerts = readAlerts();
+        
+        if (!alerts || alerts.length === 0) {
+            return {
+                success: false,
+                error: "No alerts found to generate report"
+            };
+        }
+
+        // Create fields for CSV
+        const fields = [
+            'id',
+            'ruleName', 
+            'severity',
+            'deviceIp',
+            'status',
+            'timestamp',
+            'lastUpdated',
+            'matchCount',
+            'description'
+        ];
+
+        // Parse JSON to CSV
+        const json2csvParser = new json2csv({ fields });
+        const csv = json2csvParser.parse(alerts);
+
+        // Create temp directory if it doesn't exist
+        const tempDir = path.join(__dirname, '../temp');
+        if (!fs.existsSync(tempDir)) {
+            fs.mkdirSync(tempDir, { recursive: true });
+        }
+
+        // Create a temp file for the CSV
+        const tempFilePath = path.join(tempDir, `offense-report-${Date.now()}.csv`);
+        fs.writeFileSync(tempFilePath, csv);
+
+        // Configure nodemailer
+        const transporter = nodemailer.createTransport({
+            host: process.env.SMTP_HOST,
+            port: process.env.SMTP_PORT,
+            secure: process.env.SMTP_SECURE === 'true',
+            auth: {
+                user: process.env.SMTP_USER,
+                pass: process.env.SMTP_PASS
+            }
+        });
+
+        // Set up email data
+        const mailOptions = {
+            from: process.env.EMAIL_FROM,
+            to: email,
+            subject: 'Offense Report - CybIOT Security Dashboard',
+            html: `
+                <h2>CybIOT Security Offense Report</h2>
+                <p>Please find attached a comprehensive report of all security offenses.</p>
+                <p>Report generated on: ${new Date().toLocaleString()}</p>
+                <p>Summary:</p>
+                <ul>
+                    <li>Total offenses: ${alerts.length}</li>
+                    <li>NEW: ${alerts.filter(a => a.status === 'NEW').length}</li>
+                    <li>ACKNOWLEDGED: ${alerts.filter(a => a.status === 'ACKNOWLEDGED').length}</li>
+                    <li>RESOLVED: ${alerts.filter(a => a.status === 'RESOLVED').length}</li>
+                </ul>
+                <p>This is an automated message from the CybIOT Security System.</p>
+            `,
+            attachments: [
+                {
+                    filename: 'offense-report.csv',
+                    path: tempFilePath
+                }
+            ]
+        };
+
+        // Send the email
+        await transporter.sendMail(mailOptions);
+
+        // Delete the temp file
+        fs.unlinkSync(tempFilePath);
+
+        return {
+            success: true,
+            message: `Report successfully sent to ${email}`
+        };
+    } catch (error) {
+        console.error("Error generating CSV report:", error);
+        return {
+            success: false,
+            error: error.message
+        };
+    }
+};
+
 module.exports = {
     getAlerts,
     getAlertById,
     createAlert,
     updateAlertStatus,
     getAlertStats,
-    getAlertsByDevice
+    getAlertsByDevice,
+    generateCSVReport
 };

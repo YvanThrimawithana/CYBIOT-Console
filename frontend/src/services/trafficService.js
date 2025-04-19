@@ -207,3 +207,21 @@ export const evaluateExistingLogs = async () => {
         throw error;
     }
 };
+
+// Generate CSV report of offenses and send via email
+export const generateOffenseReport = async (email) => {
+    try {
+        const response = await fetch('http://localhost:5000/api/traffic/generate-csv-report', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ email }),
+        });
+        if (!response.ok) throw new Error('Failed to generate report');
+        return await response.json();
+    } catch (error) {
+        console.error('Error generating offense report:', error);
+        throw error;
+    }
+};

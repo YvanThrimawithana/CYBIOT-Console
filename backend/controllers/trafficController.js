@@ -5,6 +5,8 @@ const { evaluateLogs } = require("../utils/ruleEvaluator");
 const { getAllDevices } = require("../models/deviceModel");
 const fs = require('fs');
 const path = require('path');
+const nodemailer = require('nodemailer');
+const json2csv = require('json2csv').Parser;
 
 const getTrafficLogsForDevice = async (req, res) => {
     try {
@@ -633,6 +635,139 @@ const evaluateExistingLogs = async (req, res) => {
     }
 };
 
+// Generate and email CSV report of offenses
+const generateCSVReport = async (req, res) => {
+    try {
+        const { email } = req.body;
+        
+        if (!email) {
+            return res.status(400).json({ 
+                success: false, 
+                error: "Email address is required" 
+            });
+        }
+        
+        // Read the alerts from the alerts.json file
+        const fs = require('fs');
+        const path = require('path');
+        const nodemailer = require('nodemailer');
+        const json2csv = require('json2csv').Parser;
+        
+        const alertsPath = path.join(__dirname, '../data/alerts.json');
+        
+        // Check if the alerts file exists
+        if (!fs.existsSync(alertsPath)) {
+            return res.status(404).json({ 
+                success: false, 
+                error: "No offense data found" 
+            });
+        }
+        
+        // Read and parse the alerts data
+        const alertsData = fs.readFileSync(alertsPath, 'utf8');
+        const alerts = JSON.parse(alertsData || '[]');
+        
+        if (!Array.isArray(alerts) || alerts.length === 0) {
+            return res.status(404).json({ 
+                success: false, 
+                error: "No offenses found to generate report" 
+            });
+        }
+        
+        // Define CSV fields
+        const fields = [
+            'id',
+            'ruleName',
+            'ruleId',
+            'description',
+            'deviceIp',
+            'severity',
+            'status',
+            'timestamp',
+            'lastUpdated',
+            'matchCount'
+        ];
+        
+        // Convert to CSV
+        const json2csvParser = new json2csv({ fields });
+        const csv = json2csvParser.parse(alerts);
+        
+        // Create temp directory if it doesn't exist
+        const tempDir = path.join(__dirname, '../temp');
+        if (!fs.existsSync(tempDir)) {
+            fs.mkdirSync(tempDir, { recursive: true });
+        }
+        
+        // Create a temp file for the CSV
+        const tempFilePath = path.join(tempDir, `offense-report-${Date.now()}.csv`);
+        fs.writeFileSync(tempFilePath, csv);
+        
+        // Set up the email transporter
+        const transporter = nodemailer.createTransport({
+            host: process.env.SMTP_HOST,
+            port: process.env.SMTP_PORT,
+            secure: process.env.SMTP_SECURE === 'true',
+            auth: {
+                user: process.env.SMTP_USER,
+                pass: process.env.SMTP_PASS
+            }
+        });
+        
+        // Count alerts by status
+        const statusCounts = {
+            NEW: alerts.filter(a => a.status === 'NEW').length,
+            ACKNOWLEDGED: alerts.filter(a => a.status === 'ACKNOWLEDGED').length,
+            RESOLVED: alerts.filter(a => a.status === 'RESOLVED').length
+        };
+        
+        // Set up the email content
+        const mailOptions = {
+            from: process.env.EMAIL_FROM,
+            to: email,
+            subject: 'Security Offense Report - CybIOT Dashboard',
+            html: `
+                <h2>CybIOT Security Offense Report</h2>
+                <p>Please find attached a comprehensive report of all security offenses.</p>
+                
+                <h3>Summary:</h3>
+                <ul>
+                    <li>Total offenses: ${alerts.length}</li>
+                    <li>New: ${statusCounts.NEW}</li>
+                    <li>Acknowledged: ${statusCounts.ACKNOWLEDGED}</li>
+                    <li>Resolved: ${statusCounts.RESOLVED}</li>
+                </ul>
+                
+                <p>This report was generated on ${new Date().toLocaleString()} and includes all offense data stored in the system.</p>
+                
+                <p>This is an automated message from the CybIOT Security System.</p>
+            `,
+            attachments: [
+                {
+                    filename: 'security-offense-report.csv',
+                    path: tempFilePath
+                }
+            ]
+        };
+        
+        // Send the email
+        await transporter.sendMail(mailOptions);
+        
+        // Delete the temp file
+        fs.unlinkSync(tempFilePath);
+        
+        return res.status(200).json({
+            success: true,
+            message: `Report successfully generated and sent to ${email}`
+        });
+    } catch (error) {
+        console.error('Error generating CSV report:', error);
+        return res.status(500).json({
+            success: false,
+            error: `Failed to generate report: ${error.message}`
+        });
+    }
+};
+
 module.exports = {
     getTrafficLogsForDevice,
     getAllTrafficLogs,
@@ -653,5 +788,7 @@ module.exports = {
     getActiveAlerts,
     getAllSystemAlerts,
     updateAlertStatusHandler,
-    evaluateExistingLogs
+    evaluateExistingLogs,
+    // CSV report generation
+    generateCSVReport
 };
