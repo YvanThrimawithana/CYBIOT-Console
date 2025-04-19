@@ -10,16 +10,19 @@ import {
     MdSystemUpdate,
     MdExpandMore,
     MdExpandLess,
-    MdNotifications
+    MdNotifications,
+    MdSettings
 } from "react-icons/md";
 import { RiShieldFill } from "react-icons/ri";
 import { getAllSystemAlerts } from "../services/trafficService";
+import NotificationSettings from "./NotificationSettings";
 
 const Navbar = () => {
     const location = useLocation();
     const navigate = useNavigate();
     const [expandedMenu, setExpandedMenu] = useState('');
     const [activeAlertCount, setActiveAlertCount] = useState(0);
+    const [isNotificationSettingsOpen, setIsNotificationSettingsOpen] = useState(false);
 
     useEffect(() => {
         // Traffic submenu should be expanded by default if on a traffic related page
@@ -160,19 +163,36 @@ const Navbar = () => {
                     ))}
                 </nav>
 
-                <button
-                    onClick={handleLogout}
-                    className="flex items-center gap-3 p-3 text-error hover:bg-error/10 rounded-md transition-colors"
-                >
-                    <MdLogout />
-                    <span>Logout</span>
-                </button>
+                <div className="mt-auto border-t border-gray-700 pt-4 flex flex-col space-y-2">
+                    {/* Notification Settings Button */}
+                    <button
+                        onClick={() => setIsNotificationSettingsOpen(true)}
+                        className="flex items-center gap-3 p-3 text-text-secondary hover:bg-background-card rounded-md transition-colors"
+                    >
+                        <MdNotifications />
+                        <span>Email Notifications</span>
+                    </button>
+                
+                    <button
+                        onClick={handleLogout}
+                        className="flex items-center gap-3 p-3 text-error hover:bg-error/10 rounded-md transition-colors"
+                    >
+                        <MdLogout />
+                        <span>Logout</span>
+                    </button>
+                </div>
             </div>
 
             {/* Main Content Area */}
             <div className="flex-1 ml-64 p-0">
                 {/* Page content will be rendered here */}
             </div>
+
+            {/* Notification Settings Modal */}
+            <NotificationSettings 
+                isOpen={isNotificationSettingsOpen}
+                onClose={() => setIsNotificationSettingsOpen(false)}
+            />
         </div>
     );
 };

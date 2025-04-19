@@ -1,3 +1,4 @@
+require("dotenv").config(); // Ensure this is at the top to load env vars first
 const express = require("express");
 const cors = require("cors");
 const userRoutes = require("./routes/userRoutes");
@@ -6,7 +7,6 @@ const trafficLogRoutes = require("./routes/trafficRoutes");
 const firmwareRoute = require("./routes/firmwareRoute");
 const alertRoutes = require("./routes/alertRoutes"); // Import alert routes
 const { startTrafficMonitoring } = require("./utils/trafficMonitor"); // Import traffic monitoring
-require("dotenv").config();
 
 const app = express();
 app.use(cors({
@@ -28,6 +28,13 @@ app.use("/api/devices", deviceRoutes);
 app.use("/api/traffic", trafficLogRoutes);
 app.use("/api/firmware", firmwareRoute);
 app.use("/api/alerts", alertRoutes); // Register alert routes
+
+// Check if SMTP credentials are configured
+if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
+    console.warn('\x1b[33m%s\x1b[0m', '⚠️  Warning: SMTP credentials not set in .env file. Email notifications will be disabled.');
+} else {
+    console.log('✅ SMTP email configuration detected successfully');
+}
 
 const PORT = process.env.PORT || 5000;
 

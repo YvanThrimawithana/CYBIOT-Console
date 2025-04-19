@@ -103,8 +103,47 @@ const AlertOffenses = () => {
             const response = await getAllSystemAlerts(filters);
             
             if (response.success) {
-                setAlerts(response.alerts);
-                setAlertStats(response.summary);
+                setAlerts(response.alerts || []);
+                
+                // Create alertStats object from the response summary
+                // Handle both the old and new API response formats
+                if (response.summary) {
+                    setAlertStats({
+                        total: response.summary.total || response.alerts.length,
+                        high: response.summary.bySeverity?.HIGH || 0,
+                        medium: response.summary.bySeverity?.MEDIUM || 0,
+                        low: response.summary.bySeverity?.LOW || 0,
+                        new: response.summary.byStatus?.NEW || 0,
+                        acknowledged: response.summary.byStatus?.ACKNOWLEDGED || 0,
+                        resolved: response.summary.byStatus?.RESOLVED || 0
+                    });
+                } else {
+                    // Fallback: calculate stats from the alerts array
+                    const stats = {
+                        total: response.alerts.length,
+                        high: 0,
+                        medium: 0,
+                        low: 0,
+                        new: 0,
+                        acknowledged: 0,
+                        resolved: 0
+                    };
+                    
+                    response.alerts.forEach(alert => {
+                        // Count by severity
+                        if (alert.severity === "HIGH") stats.high++;
+                        else if (alert.severity === "MEDIUM") stats.medium++;
+                        else if (alert.severity === "LOW") stats.low++;
+                        
+                        // Count by status
+                        if (alert.status === "NEW") stats.new++;
+                        else if (alert.status === "ACKNOWLEDGED") stats.acknowledged++;
+                        else if (alert.status === "RESOLVED") stats.resolved++;
+                    });
+                    
+                    setAlertStats(stats);
+                }
+                
                 setAlertsByDevice(response.deviceAlerts || {});
             } else {
                 throw new Error("Failed to load alerts");
@@ -524,6 +563,11 @@ const AlertOffenses = () => {
                                                 <div className="text-xs text-gray-400 mt-1 max-w-md truncate">
                                                     {alert.description}
                                                 </div>
+                                                {alert.matchCount > 1 && (
+                                                    <span className="inline-flex items-center px-2 py-0.5 bg-blue-900/30 text-blue-400 rounded text-xs mt-1">
+                                                        {alert.matchCount} related events
+                                                    </span>
+                                                )}
                                             </td>
                                             <td className="px-6 py-4 whitespace-nowrap text-blue-400">
                                                 {alert.deviceIp}

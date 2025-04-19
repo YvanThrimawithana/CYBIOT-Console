@@ -1,6 +1,8 @@
 const fs = require("fs");
 const path = require("path");
 const { v4: uuidv4 } = require("uuid");
+// Remove the direct import to avoid circular dependency
+// Instead, we'll use a deferred execution approach
 
 // Define the paths
 const dataDir = path.join(__dirname, "../data");
@@ -124,6 +126,25 @@ const createRule = (ruleData) => {
         rules.push(newRule);
         
         if (writeRules(rules)) {
+            // Immediately process existing logs against this new rule
+            // This allows the rule to take effect without server restart
+            if (newRule.enabled) {
+                console.log(`✅ Processing existing logs against new rule: ${newRule.name}`);
+                setTimeout(() => {
+                    try {
+                        // Import the module dynamically to avoid circular dependency
+                        const alertEngine = require("../utils/alertEngine");
+                        if (typeof alertEngine.processExistingLogs === 'function') {
+                            alertEngine.processExistingLogs(newRule);
+                        } else {
+                            console.error("processExistingLogs is not a function");
+                        }
+                    } catch (error) {
+                        console.error("Error processing existing logs:", error);
+                    }
+                }, 500); // Small delay to ensure rule is saved before processing
+            }
+            
             return {
                 success: true,
                 rule: newRule
@@ -168,6 +189,9 @@ const updateRule = (id, ruleData) => {
             };
         }
         
+        // Store the old enabled state
+        const wasEnabled = rules[ruleIndex].enabled;
+        
         // Update the rule
         rules[ruleIndex] = {
             ...rules[ruleIndex],
@@ -178,6 +202,26 @@ const updateRule = (id, ruleData) => {
         
         // Save rules
         if (writeRules(rules)) {
+            // If the rule was disabled but now enabled, or if the condition changed while enabled,
+            // process existing logs against this updated rule
+            const isConditionChanged = rules[ruleIndex].condition !== ruleData.condition;
+            if (rules[ruleIndex].enabled && (!wasEnabled || isConditionChanged)) {
+                console.log(`✅ Processing existing logs against updated rule: ${rules[ruleIndex].name}`);
+                setTimeout(() => {
+                    try {
+                        // Import the module dynamically to avoid circular dependency
+                        const alertEngine = require("../utils/alertEngine");
+                        if (typeof alertEngine.processExistingLogs === 'function') {
+                            alertEngine.processExistingLogs(rules[ruleIndex]);
+                        } else {
+                            console.error("processExistingLogs is not a function");
+                        }
+                    } catch (error) {
+                        console.error("Error processing existing logs:", error);
+                    }
+                }, 500); // Small delay to ensure rule is saved before processing
+            }
+            
             return {
                 success: true,
                 rule: rules[ruleIndex]

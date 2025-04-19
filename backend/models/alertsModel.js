@@ -1,10 +1,15 @@
 const fs = require("fs");
 const path = require("path");
 const { v4: uuidv4 } = require("uuid");
+const { sendAlertNotification, sendFollowupNotification } = require("../utils/emailService");
 
 // Define the paths
 const dataDir = path.join(__dirname, "../data");
 const alertsPath = path.join(dataDir, "alerts.json");
+
+// Track notification milestones for alerts
+const alertNotificationMilestones = new Map();
+const NOTIFICATION_THRESHOLDS = [10, 25, 50, 100]; // Notification thresholds
 
 // Ensure the data directory exists
 const ensureDataDirectory = () => {
@@ -42,6 +47,38 @@ const writeAlerts = (alerts) => {
     } catch (error) {
         console.error("Error writing alerts:", error);
         return false;
+    }
+};
+
+// Check if we need to send a follow-up notification for an alert
+const checkFollowupNotification = (alert) => {
+    // Only send follow-ups for HIGH severity alerts
+    if (alert.severity !== "HIGH") return;
+
+    // Get the current count
+    const currentCount = alert.matchCount;
+    
+    // Initialize tracker for this alert if it doesn't exist
+    if (!alertNotificationMilestones.has(alert.id)) {
+        alertNotificationMilestones.set(alert.id, new Set());
+    }
+    
+    const notifiedThresholds = alertNotificationMilestones.get(alert.id);
+    
+    // Check if we've reached any notification threshold
+    for (const threshold of NOTIFICATION_THRESHOLDS) {
+        if (currentCount >= threshold && !notifiedThresholds.has(threshold)) {
+            // Mark this threshold as notified
+            notifiedThresholds.add(threshold);
+            
+            // Send follow-up notification
+            sendFollowupNotification(alert, threshold).catch(error => {
+                console.error(`Failed to send follow-up notification for alert ${alert.id} at threshold ${threshold}:`, error);
+            });
+            
+            // Only send one notification at a time
+            break;
+        }
     }
 };
 
@@ -125,9 +162,28 @@ const createAlert = (alertData) => {
         );
         
         if (duplicateAlert) {
-            // Update match count instead of creating a new alert
+            // Update match count and add new matchedLogs
             duplicateAlert.matchCount = (duplicateAlert.matchCount || 1) + 1;
             duplicateAlert.lastUpdated = now.toISOString();
+            
+            // Add the new matched logs to the existing ones
+            if (alertData.matchedLogs && alertData.matchedLogs.length > 0) {
+                if (!duplicateAlert.matchedLogs) {
+                    duplicateAlert.matchedLogs = [];
+                }
+                
+                // Add new logs to the existing ones, up to a reasonable limit to prevent huge objects
+                const MAX_LOGS = 50; // Maximum number of logs to store
+                duplicateAlert.matchedLogs = [
+                    ...alertData.matchedLogs,
+                    ...duplicateAlert.matchedLogs
+                ].slice(0, MAX_LOGS);
+            }
+            
+            // Check if we need to send a follow-up notification
+            checkFollowupNotification(duplicateAlert);
+            
+            // Save the updated alerts
             writeAlerts(alerts);
             
             return {
@@ -149,6 +205,13 @@ const createAlert = (alertData) => {
         
         alerts.push(newAlert);
         writeAlerts(alerts);
+
+        // Send email notification for HIGH severity alerts
+        if (newAlert.severity === "HIGH") {
+            sendAlertNotification(newAlert).catch(error => {
+                console.error("Failed to send alert notification email:", error);
+            });
+        }
         
         return {
             success: true,
@@ -186,6 +249,11 @@ const updateAlertStatus = (id, status) => {
         // Update status and lastUpdated timestamp
         alerts[alertIndex].status = status;
         alerts[alertIndex].lastUpdated = new Date().toISOString();
+        
+        // If resolved, clean up the notification milestone tracking
+        if (status === "RESOLVED" && alertNotificationMilestones.has(id)) {
+            alertNotificationMilestones.delete(id);
+        }
         
         writeAlerts(alerts);
         

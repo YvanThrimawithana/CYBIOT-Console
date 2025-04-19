@@ -1,104 +1,66 @@
-const { getAllRules } = require('../models/alertRulesModel');
-const { createAlert } = require('../models/alertsModel');
+const { getAllRules } = require("../models/alertRulesModel");
+const { createAlert } = require("../models/alertsModel");
+const { evaluateCondition } = require("./alertEngine");
 
-// Evaluate if a log entry matches a rule condition
-const evaluateCondition = (log, condition) => {
-    try {
-        // Handle different condition types
-        
-        // 1. Simple IP match
-        if (condition.includes("ip:")) {
-            const ipToMatch = condition.split("ip:")[1].trim();
-            // Check source or destination IP
-            const sourceIp = log.source?.srcIp || '';
-            const destIp = log.source?.dstIp || '';
-            const deviceIp = log.deviceIp || '';
-            
-            return sourceIp.includes(ipToMatch) || 
-                   destIp.includes(ipToMatch) || 
-                   deviceIp.includes(ipToMatch);
-        }
-        
-        // 2. Protocol match
-        if (condition.includes("protocol:")) {
-            const protocolToMatch = condition.split("protocol:")[1].trim().toUpperCase();
-            const protocol = (log.source?.protocol || '').toUpperCase();
-            return protocol.includes(protocolToMatch);
-        }
-        
-        // 3. Content match in info field
-        if (condition.includes("content:")) {
-            const contentToMatch = condition.split("content:")[1].trim().toLowerCase();
-            const info = (log.source?.info || '').toLowerCase();
-            return info.includes(contentToMatch);
-        }
-        
-        // 4. Generic JSON match (check entire log)
-        const logString = JSON.stringify(log).toLowerCase();
-        return logString.includes(condition.toLowerCase());
-        
-    } catch (error) {
-        console.error("Error evaluating condition:", error);
-        return false;
-    }
-};
-
-// Evaluate a set of logs against all rules
+// Function to evaluate all existing logs against current rules
 const evaluateLogs = (logs, deviceIp) => {
-    const allRules = getAllRules().filter(rule => rule.enabled);
-    const generatedAlerts = [];
+    // Get all active rules
+    const rules = getAllRules().filter(rule => rule.enabled);
+    const matchedRules = [];
     
-    // Track rule matches to handle thresholds
+    // Keep track of which logs match which rules for threshold checking
     const ruleMatches = {};
     
-    // First pass: count matches for each rule
-    for (const log of logs) {
-        for (const rule of allRules) {
+    // Process each log against each rule
+    logs.forEach(log => {
+        rules.forEach(rule => {
+            // Skip if rule is disabled
+            if (!rule.enabled) return;
+            
+            // Check if the log matches the rule condition
             const isMatch = evaluateCondition(log, rule.condition);
             
             if (isMatch) {
+                // Initialize array for this rule if it doesn't exist
                 if (!ruleMatches[rule.id]) {
-                    ruleMatches[rule.id] = {
-                        rule,
-                        count: 0,
-                        logs: []
-                    };
+                    ruleMatches[rule.id] = [];
                 }
                 
-                ruleMatches[rule.id].count++;
-                ruleMatches[rule.id].logs.push(log);
+                // Add log to the matched logs for this rule
+                ruleMatches[rule.id].push(log);
             }
-        }
-    }
+        });
+    });
     
-    // Second pass: generate alerts for rules that meet the threshold
-    for (const ruleId in ruleMatches) {
-        const { rule, count, logs } = ruleMatches[ruleId];
+    // Check thresholds for matched rules
+    Object.entries(ruleMatches).forEach(([ruleId, matchedLogs]) => {
+        const rule = rules.find(r => r.id === ruleId);
         
-        // If match count is at least the threshold, generate an alert
-        if (count >= rule.threshold) {
+        if (rule && matchedLogs.length >= rule.threshold) {
+            // Create alert for this rule
             const alertData = {
                 ruleId: rule.id,
                 ruleName: rule.name,
                 description: rule.description,
-                deviceIp,
+                deviceIp: deviceIp,
                 severity: rule.severity,
-                matchedLogs: logs.slice(0, 10) // Limit to prevent huge payloads
+                matchedLogs: matchedLogs.slice(0, 10) // Limit to 10 logs to avoid huge alerts
             };
             
             const result = createAlert(alertData);
             
-            if (result.success && !result.deduplicated) {
+            if (result.success) {
                 console.log(`✅ Alert created for rule "${rule.name}" on device ${deviceIp}`);
-                generatedAlerts.push(result.alert);
+                matchedRules.push({
+                    rule,
+                    matchCount: matchedLogs.length,
+                    alert: result.alert
+                });
             }
         }
-    }
+    });
     
-    return generatedAlerts;
+    return matchedRules;
 };
 
-module.exports = {
-    evaluateCondition,
-    evaluateLogs
-};
+module.exports = { evaluateLogs };

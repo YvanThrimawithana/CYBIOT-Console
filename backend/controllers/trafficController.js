@@ -610,20 +610,15 @@ const updateAlertStatusHandler = async (req, res) => {
     }
 };
 
-// Evaluate existing logs against the rules (for testing or after adding new rules)
+// Evaluate existing logs against all rules (for testing or after adding new rules)
 const evaluateExistingLogs = async (req, res) => {
     try {
-        const logs = await getTrafficLogsSummary();
-        let totalAlerts = 0;
+        // Use the optimized processAllExistingLogs function from alertEngine
+        const { processAllExistingLogs } = require("../utils/alertEngine");
+        console.log("🚀 Starting evaluation of existing logs against all rules...");
         
-        // Process each device's logs
-        for (const [deviceIp, deviceLogs] of Object.entries(logs)) {
-            if (Array.isArray(deviceLogs) && deviceLogs.length > 0) {
-                // Evaluate all logs for this device
-                const generatedAlerts = evaluateLogs(deviceLogs, deviceIp);
-                totalAlerts += generatedAlerts.length;
-            }
-        }
+        // Start the evaluation process (non-blocking)
+        const totalAlerts = await processAllExistingLogs();
         
         res.json({ 
             success: true, 
