@@ -6,7 +6,8 @@ const {
     getFirmwareById,
     analyzeFirmware,
     getAnalysisResult,
-    deleteFirmware
+    deleteFirmware,
+    downloadFirmware
 } = require('../controllers/firmwareController');
 const { auth } = require('../middleware/auth');
 const multer = require('multer');
@@ -20,6 +21,7 @@ router.get('/list', getFirmwareList);
 router.get('/:id', getFirmwareById);
 router.post('/:id/analyze', analyzeFirmware);
 router.get('/:id/analysis', getAnalysisResult);
+router.get('/:id/download', downloadFirmware);
 router.delete('/:id', deleteFirmware);
 
 module.exports = router;

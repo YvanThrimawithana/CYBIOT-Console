@@ -32,11 +32,25 @@ export const addDevice = async (name, ip) => {
     }
 };
 
-export const deleteDevice = async (id) => {
+export const deleteDevice = async (id, ipAddress) => {
     try {
-        await axios.post(`${API_URL}/delete`, { id });
+        if (!id) {
+            throw new Error("Device ID is required");
+        }
+        
+        console.log("Sending delete request with ID:", id, "and IP:", ipAddress);
+        const response = await axios.post(`${API_URL}/delete`, { 
+            id: id,
+            ipAddress: ipAddress
+        });
+        return response.data;
     } catch (error) {
-        throw error.response ? error.response.data.error : "Network Error";
+        console.error("Error in deleteDevice service:", error);
+        if (error.response) {
+            console.error("Server response:", error.response.data);
+            throw error.response.data.error || "Server error";
+        }
+        throw error.message || "Failed to delete device";
     }
 };
 

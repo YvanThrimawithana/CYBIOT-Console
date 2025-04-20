@@ -3,6 +3,9 @@ const fs = require("fs");
 const { getAllDevices } = require("../models/deviceModel");
 const { addLog } = require("../models/trafficModel");
 
+// Track all running monitor processes by IP
+const activeMonitors = new Map();
+
 const startTrafficMonitoring = async () => {
     try {
         // getAllDevices now returns a Promise with {success, devices} structure
@@ -34,6 +37,12 @@ const startTrafficMonitoring = async () => {
 };
 
 const monitorDevice = (device) => {
+    // Skip if device is already being monitored
+    if (activeMonitors.has(device.ipAddress)) {
+        console.log(`Device ${device.name} (${device.ipAddress}) is already being monitored.`);
+        return;
+    }
+
     console.log(`🚨 Starting traffic monitoring for device: ${device.name} (${device.ipAddress})`);
     
     // Check if tshark is available
@@ -101,6 +110,9 @@ const startDeviceMonitoring = (device) => {
                 "-l"
             ]);
 
+            // Store the tshark process in the activeMonitors map
+            activeMonitors.set(device.ipAddress, tshark);
+
             tshark.stdout.on("data", (data) => {
                 try {
                     const lines = data.toString().trim().split('\n');
@@ -150,19 +162,73 @@ const startDeviceMonitoring = (device) => {
 
             tshark.on("close", (code) => {
                 console.log(`⚠️ tshark for ${device.name} stopped with code ${code}`);
-                // Restart monitoring after a delay
-                setTimeout(() => startDeviceMonitoring(device), 5000);
+                // Remove from active monitors on close
+                activeMonitors.delete(device.ipAddress);
+                
+                // Restart monitoring after a delay only if not manually stopped
+                // We use a flag in the map entry to track if it was manually stopped
+                setTimeout(() => {
+                    // Only restart if not manually removed from tracking
+                    if (!activeMonitors.has(device.ipAddress)) {
+                        // Check if the device still exists before restarting monitoring
+                        getAllDevices()
+                            .then(result => {
+                                if (result.success) {
+                                    const deviceStillExists = result.devices.some(
+                                        d => d.ipAddress === device.ipAddress
+                                    );
+                                    if (deviceStillExists) {
+                                        startDeviceMonitoring(device);
+                                    } else {
+                                        console.log(`Device ${device.name} (${device.ipAddress}) no longer exists, not restarting monitoring`);
+                                    }
+                                }
+                            })
+                            .catch(error => {
+                                console.error("Error checking device existence:", error);
+                            });
+                    }
+                }, 5000);
             });
             
             tshark.on("error", (error) => {
                 console.error(`🔴 tshark error for ${device.name}: ${error.message}`);
-                setTimeout(() => startDeviceMonitoring(device), 5000);
+                activeMonitors.delete(device.ipAddress);
             });
         });
     } catch (error) {
         console.error(`🔴 Error in tshark setup for ${device.name}:`, error);
-        setTimeout(() => startDeviceMonitoring(device), 5000);
+        activeMonitors.delete(device.ipAddress);
     }
 };
 
-module.exports = { startTrafficMonitoring };
+// New function to stop monitoring a specific device
+const stopMonitoringDevice = (ipAddress) => {
+    if (!ipAddress) {
+        console.error("Cannot stop monitoring: No IP address provided");
+        return false;
+    }
+    
+    console.log(`🛑 Attempting to stop monitoring for IP: ${ipAddress}`);
+    
+    const tsharkProcess = activeMonitors.get(ipAddress);
+    if (tsharkProcess) {
+        // Kill the process
+        try {
+            tsharkProcess.kill('SIGTERM');
+            console.log(`🛑 Stopped tshark process for ${ipAddress}`);
+            
+            // Remove from the active monitors map
+            activeMonitors.delete(ipAddress);
+            return true;
+        } catch (error) {
+            console.error(`Failed to kill tshark process for ${ipAddress}:`, error);
+            return false;
+        }
+    } else {
+        console.log(`No active monitoring found for ${ipAddress}`);
+        return false;
+    }
+};
+
+module.exports = { startTrafficMonitoring, monitorDevice, stopMonitoringDevice };

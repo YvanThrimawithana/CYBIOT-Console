@@ -125,17 +125,58 @@ const getDevices = async (req, res) => {
 };
 
 const removeDevice = async (req, res) => {
-    const { id } = req.body;
+    const { id, ipAddress } = req.body;
+    
     if (!id) {
+        console.error("Delete device error: No ID provided in request");
         return res.status(400).json({ error: "Device ID is required" });
     }
     
-    const result = await deleteDeviceFromStorage(id);
+    console.log(`Attempting to delete device with ID: ${id}, type: ${ipAddress ? 'with IP' : 'unknown'}`);
     
-    if (result.success) {
-        res.json({ message: "Device deleted successfully!" });
-    } else {
-        res.status(404).json({ error: result.error || "Device not found" });
+    try {
+        let result;
+        
+        // First try to delete by MongoDB _id directly since that's what we're receiving now
+        console.log("Attempting to delete using MongoDB _id directly");
+        result = await deleteDeviceFromStorage({ _id: id });
+        
+        // If that didn't work, try deviceId as fallback
+        if (!result.success) {
+            console.log("Attempting to delete using deviceId");
+            result = await deleteDeviceFromStorage({ deviceId: id });
+        }
+        
+        if (result.success) {
+            console.log(`Successfully deleted device with ID: ${id}`);
+            
+            // Remove this IP address from the heartbeats tracking
+            if (ipAddress) {
+                console.log(`Removing IP ${ipAddress} from heartbeat tracking`);
+                if (lastHeartbeats[ipAddress]) {
+                    delete lastHeartbeats[ipAddress];
+                }
+                
+                // Signal to stop monitoring this IP (will be implemented in trafficMonitor.js)
+                try {
+                    const { stopMonitoringDevice } = require("../utils/trafficMonitor");
+                    if (typeof stopMonitoringDevice === 'function') {
+                        stopMonitoringDevice(ipAddress);
+                        console.log(`Stopped traffic monitoring for IP: ${ipAddress}`);
+                    }
+                } catch (error) {
+                    console.error(`Error stopping traffic monitoring: ${error.message}`);
+                }
+            }
+            
+            res.json({ message: "Device deleted successfully!" });
+        } else {
+            console.error(`Failed to delete device with ID: ${id}`, result.error);
+            res.status(404).json({ error: result.error || "Device not found" });
+        }
+    } catch (error) {
+        console.error(`Error while deleting device: ${error.message}`);
+        res.status(500).json({ error: `Failed to delete device: ${error.message}` });
     }
 };
 

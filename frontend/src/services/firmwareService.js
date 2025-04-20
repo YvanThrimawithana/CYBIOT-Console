@@ -173,3 +173,26 @@ export const markFirmwareAsStable = async (firmwareId) => {
         throw error.response?.data?.error || "Network Error";
     }
 };
+
+export const downloadFirmware = async (firmwareId) => {
+    try {
+        const response = await api.get(`/firmware/${firmwareId}/download`, { 
+            responseType: 'blob' 
+        });
+        
+        // Create a download link and trigger it
+        const url = window.URL.createObjectURL(new Blob([response.data]));
+        const link = document.createElement('a');
+        link.href = url;
+        link.setAttribute('download', `firmware-${firmwareId}.bin`);
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.URL.revokeObjectURL(url);
+        
+        return { success: true };
+    } catch (error) {
+        console.error('Download error:', error);
+        throw error.response?.data?.error || "Failed to download firmware";
+    }
+};

@@ -33,28 +33,40 @@ exports.uploadFirmware = async (req, res) => {
             throw new Error('File size exceeds limit (50MB)');
         }
 
+        // Generate hash for integrity check
+        const hash = crypto.createHash('sha256');
+        hash.update(req.file.buffer);
+        const fileHash = hash.digest('hex');
+
         // Pass both metadata and file buffer to save method
-        const firmware = await FirmwareModel.save({
+        const result = await FirmwareModel.addFirmware({
             name: req.body.name || req.file.originalname,
             version: req.body.version || '1.0.0',
             description: req.body.description,
             deviceType: req.body.deviceType,
             size: req.file.size,
+            hash: fileHash,
             uploadDate: new Date(),
             status: 'pending'
-        }, req.file.buffer); // Pass the buffer as second argument
+        }, req.file.buffer); // Pass the buffer directly
+
+        if (!result.success) {
+            throw new Error(result.error || 'Failed to save firmware');
+        }
+
+        const firmware = result.firmware;
 
         console.log('Firmware saved:', {
-            id: firmware.id,
+            id: firmware._id,
             name: firmware.name,
-            size: firmware.size
+            size: firmware.fileSize
         });
 
         res.status(201).json({
             success: true,
             message: 'Firmware uploaded successfully',
             firmware: {
-                id: firmware.id,
+                id: firmware._id,
                 name: firmware.name,
                 version: firmware.version,
                 status: firmware.status
@@ -71,11 +83,23 @@ exports.uploadFirmware = async (req, res) => {
 
 exports.getFirmwareList = async (req, res) => {
     try {
-        const firmwares = await FirmwareModel.getAll();
-        res.json(firmwares.map(f => {
-            const { encryptedData, ...rest } = f;
-            return rest;
+        const result = await FirmwareModel.getAllFirmware();
+        if (!result.success) {
+            throw new Error(result.error);
+        }
+        
+        const firmwares = result.firmware.map(f => ({
+            id: f._id,
+            name: f.name,
+            version: f.version,
+            deviceType: f.deviceType,
+            uploadDate: f.uploadDate,
+            status: f.status,
+            fileSize: f.fileSize,
+            securityScore: f.securityScore
         }));
+        
+        res.json(firmwares);
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
@@ -83,25 +107,27 @@ exports.getFirmwareList = async (req, res) => {
 
 exports.getFirmwareById = async (req, res) => {
     try {
-        const firmware = await FirmwareModel.findById(req.params.id);
-        if (!firmware) {
-            return res.status(404).json({ error: 'Firmware not found' });
+        const result = await FirmwareModel.getFirmwareById(req.params.id);
+        if (!result.success) {
+            return res.status(404).json({ error: result.error });
         }
 
-        // Get analysis results
-        const analysisResults = await FirmwareModel.getAnalysisResult(req.params.id);
+        const firmware = result.firmware;
         
-        // Only attempt to decrypt metadata if it exists and appears to be encrypted
-        const metadata = firmware.metadata ? 
-            (typeof firmware.metadata === 'string' ? decrypt(firmware.metadata) : firmware.metadata) : 
-            firmware.metadata;
+        // Get analysis results if available
+        const analysisResults = await FirmwareModel.getAnalysisResult(req.params.id);
 
         const sanitizedResponse = {
-            ...firmware,
-            analysis: analysisResults,
-            filePath: undefined,
-            analysisPath: undefined,
-            metadata: metadata
+            id: firmware._id,
+            name: firmware.name,
+            version: firmware.version,
+            deviceType: firmware.deviceType,
+            description: firmware.description,
+            uploadDate: firmware.uploadDate,
+            status: firmware.status,
+            fileSize: firmware.fileSize,
+            securityScore: firmware.securityScore,
+            analysis: analysisResults
         };
 
         res.json(sanitizedResponse);
@@ -116,58 +142,39 @@ exports.getFirmwareById = async (req, res) => {
 
 exports.analyzeFirmware = async (req, res) => {
     try {
-        const firmware = await FirmwareModel.findById(req.params.id);
-        if (!firmware) return res.status(404).json({ message: 'Firmware not found' });
+        const result = await FirmwareModel.getFirmwareById(req.params.id);
+        if (!result.success) {
+            return res.status(404).json({ error: 'Firmware not found' });
+        }
+        const firmware = result.firmware;
 
-        await FirmwareModel.update(req.params.id, { status: 'analyzing' });
-        
-        const encryptedData = await FirmwareModel.getFirmwareFile(req.params.id);
-        const decryptedData = Buffer.from(decrypt(encryptedData), 'base64');
+        // Update status to analyzing
+        await FirmwareModel.updateFirmware(req.params.id, { status: 'analyzing' });
         
         try {
-            // Use original firmware name for analysis
-            const { resultPath } = await AnalysisService.sendFirmwareForAnalysis(
-                decryptedData,
-                `${firmware.id}_${firmware.name}`
+            // Get firmware binary from GridFS
+            const fileBuffer = await FirmwareModel.getFirmwareFile(req.params.id);
+            
+            // Send for analysis - now saves directly to MongoDB
+            const analysisResult = await AnalysisService.sendFirmwareForAnalysis(
+                fileBuffer,
+                `${firmware._id}_${firmware.name}`
             );
-
-            // Read analysis results
-            const analysisResults = await fs.readFile(resultPath, 'utf8');
             
-            // Try to parse JSON, if fails create a default structure
-            let parsedResults;
-            try {
-                parsedResults = JSON.parse(analysisResults);
-            } catch (parseError) {
-                console.warn('Invalid JSON from analyzer:', analysisResults);
-                parsedResults = {
-                    static: {
-                        info: [{ 
-                            message: analysisResults,
-                            severity: 'INFO'
-                        }],
-                        errors: []
-                    },
-                    dynamic: {
-                        open_ports: [],
-                        fuzzing_results: [],
-                        timeline: []
-                    }
-                };
-            }
-            
-            // Save results with firmware ID
-            await FirmwareModel.saveAnalysisResult(req.params.id, parsedResults);
-            await FirmwareModel.update(req.params.id, { status: 'analyzed' });
+            // Update firmware status to analyzed
+            await FirmwareModel.updateFirmware(req.params.id, { status: 'analyzed' });
 
+            // Get the results directly from the response
+            const parsedResults = analysisResult.results;
+            
             res.json({ 
-                message: 'Analysis completed', 
-                id: firmware.id,
+                message: 'Analysis completed and saved to MongoDB', 
+                id: firmware._id,
                 results: parsedResults 
             });
         } catch (analysisError) {
             console.error('Analysis processing failed:', analysisError);
-            await FirmwareModel.update(req.params.id, { 
+            await FirmwareModel.updateFirmware(req.params.id, { 
                 status: 'error',
                 analysisError: analysisError.message
             });
@@ -181,12 +188,12 @@ exports.analyzeFirmware = async (req, res) => {
 
 exports.getAnalysisResult = async (req, res) => {
     try {
-        const firmware = await FirmwareModel.findById(req.params.id);
-        if (!firmware) {
+        const result = await FirmwareModel.getFirmwareById(req.params.id);
+        if (!result.success) {
             return res.status(404).json({ error: 'Firmware not found' });
         }
 
-        // Get results directly from firmware model
+        // Get results directly from MongoDB
         const results = await FirmwareModel.getAnalysisResult(req.params.id);
         if (!results) {
             return res.status(404).json({ error: 'Analysis results not found' });
@@ -208,15 +215,38 @@ exports.getAnalysisResult = async (req, res) => {
     }
 };
 
-exports.deleteFirmware = async (req, res) => {
+exports.downloadFirmware = async (req, res) => {
     try {
-        const firmware = await FirmwareModel.findById(req.params.id);
-        if (!firmware) {
+        const result = await FirmwareModel.getFirmwareById(req.params.id);
+        if (!result.success) {
             return res.status(404).json({ error: 'Firmware not found' });
         }
-
-        await FirmwareModel.delete(req.params.id);
         
+        const firmware = result.firmware;
+        
+        // Get firmware binary from GridFS
+        const fileBuffer = await FirmwareModel.getFirmwareFile(req.params.id);
+        
+        // Set headers for file download
+        res.setHeader('Content-Type', 'application/octet-stream');
+        res.setHeader('Content-Disposition', `attachment; filename=${firmware.fileName || 'firmware.bin'}`);
+        res.setHeader('Content-Length', fileBuffer.length);
+        
+        // Send the file
+        res.send(fileBuffer);
+    } catch (error) {
+        console.error('Download failed:', error);
+        res.status(500).json({ error: 'Failed to download firmware' });
+    }
+};
+
+exports.deleteFirmware = async (req, res) => {
+    try {
+        const result = await FirmwareModel.deleteFirmware(req.params.id);
+        if (!result.success) {
+            return res.status(404).json({ error: result.error || 'Firmware not found' });
+        }
+
         res.json({ message: 'Firmware deleted successfully' });
     } catch (error) {
         console.error('Delete failed:', error);

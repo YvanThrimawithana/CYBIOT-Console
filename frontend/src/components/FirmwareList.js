@@ -1,9 +1,10 @@
 import React from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
-import { getFirmwareList, deleteFirmware } from '../services/firmwareService';
+import { getFirmwareList, deleteFirmware, downloadFirmware } from '../services/firmwareService';
 import { theme } from '../styles/theme';
 import { useNavigate } from 'react-router-dom';
+import { MdFileDownload, MdDeleteOutline, MdAnalytics } from 'react-icons/md';
 
 const FirmwareList = ({ onSelect, selected }) => {
     const { data: firmwares, isLoading } = useQuery({
@@ -20,6 +21,14 @@ const FirmwareList = ({ onSelect, selected }) => {
         mutationFn: deleteFirmware,
         onSuccess: () => {
             queryClient.invalidateQueries(['firmwares']);
+        }
+    });
+
+    const downloadMutation = useMutation({
+        mutationFn: downloadFirmware,
+        onError: (error) => {
+            console.error('Download failed:', error);
+            alert(`Download failed: ${error.message || 'Unknown error'}`);
         }
     });
 
@@ -48,6 +57,16 @@ const FirmwareList = ({ onSelect, selected }) => {
     const handleSelect = (firmware, e) => {
         e.stopPropagation(); // Prevent row click
         onSelect(firmware);
+    };
+
+    const handleDownload = async (firmware, e) => {
+        e.stopPropagation(); // Prevent row click
+        try {
+            await downloadMutation.mutateAsync(firmware.id);
+        } catch (error) {
+            // Error is handled in the mutation
+            console.error('Download error in component:', error);
+        }
     };
 
     const handleDelete = async (firmware, e) => {
@@ -91,6 +110,7 @@ const FirmwareList = ({ onSelect, selected }) => {
                             <th className="px-4 py-2 font-semibold" style={{ color: theme.colors.text.secondary }}>Version</th>
                             <th className="px-4 py-2 font-semibold" style={{ color: theme.colors.text.secondary }}>Upload Date</th>
                             <th className="px-4 py-2 font-semibold" style={{ color: theme.colors.text.secondary }}>Status</th>
+                            <th className="px-4 py-2 font-semibold" style={{ color: theme.colors.text.secondary }}>Score</th>
                             <th className="px-4 py-2 font-semibold" style={{ color: theme.colors.text.secondary }}>Actions</th>
                         </tr>
                     </thead>
@@ -127,6 +147,17 @@ const FirmwareList = ({ onSelect, selected }) => {
                                             {firmware.status}
                                         </span>
                                     </td>
+                                    <td className="px-4 py-2" style={{ color: theme.colors.text.secondary }}>
+                                        {firmware.securityScore !== null ? 
+                                            <span style={{
+                                                color: firmware.securityScore > 7 ? theme.colors.status.success : 
+                                                      firmware.securityScore > 4 ? theme.colors.status.warning :
+                                                      theme.colors.status.error
+                                            }}>
+                                                {firmware.securityScore}/10
+                                            </span>
+                                          : '-'}
+                                    </td>
                                     <td className="px-4 py-2">
                                         <div className="flex space-x-2">
                                             <button
@@ -138,22 +169,34 @@ const FirmwareList = ({ onSelect, selected }) => {
                                                 className="hover:opacity-80 px-2 py-1 rounded"
                                                 disabled={selected?.id === firmware.id}
                                             >
-                                                Select for Analysis
+                                                Select
                                             </button>
                                             {firmware.status === 'analyzed' && (
                                                 <button
                                                     onClick={(e) => handleViewResults(firmware, e)}
                                                     style={{ color: theme.colors.text.secondary }}
-                                                    className="hover:opacity-80 px-2 py-1 rounded"
+                                                    className="hover:opacity-80 px-2 py-1 rounded flex items-center"
                                                 >
-                                                    View Results
+                                                    <MdAnalytics className="mr-1" />
+                                                    Results
                                                 </button>
                                             )}
                                             <button
+                                                onClick={(e) => handleDownload(firmware, e)}
+                                                style={{ color: theme.colors.primary.main }}
+                                                className="hover:opacity-80 px-2 py-1 rounded flex items-center"
+                                                disabled={downloadMutation.isLoading}
+                                            >
+                                                <MdFileDownload className="mr-1" />
+                                                {downloadMutation.isLoading && firmware.id === downloadMutation.variables ? 
+                                                    'Downloading...' : 'Download'}
+                                            </button>
+                                            <button
                                                 onClick={(e) => handleDelete(firmware, e)}
                                                 style={{ color: theme.colors.status.error }}
-                                                className="hover:opacity-80 px-2 py-1 rounded"
+                                                className="hover:opacity-80 px-2 py-1 rounded flex items-center"
                                             >
+                                                <MdDeleteOutline className="mr-1" />
                                                 Delete
                                             </button>
                                         </div>
