@@ -128,18 +128,18 @@ const StatusCard = ({ icon, title, value, color }) => (
 const DeviceRow = ({ device }) => (
     <tr className="border-t border-gray-700 hover:bg-background-card transition-colors">
         <td className="p-4" style={{ color: theme.colors.text.primary }}>{device.name}</td>
-        <td className="p-4" style={{ color: theme.colors.text.secondary }}>{device.ip}</td>
+        <td className="p-4" style={{ color: theme.colors.text.secondary }}>{device.ipAddress || device.ip}</td>
         <td className="p-4">
             <span className={`px-3 py-1 rounded-full text-sm font-medium ${
-                device.status.toLowerCase() === "online" 
+                device.status?.toLowerCase() === "online" 
                     ? 'bg-green-100 text-green-800' 
                     : 'bg-red-100 text-red-800'
             }`}>
-                {device.status}
+                {device.status || 'Unknown'}
             </span>
         </td>
         <td className="p-4">
-            <Link to={`/device/${device.id}`}
+            <Link to={`/traffic/${device.ipAddress || device.ip}`}
                 className="text-sm font-medium"
                 style={{ color: theme.colors.primary.main }}>
                 View Details

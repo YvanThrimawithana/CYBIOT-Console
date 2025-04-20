@@ -1,117 +1,163 @@
-const fs = require("fs");
-const path = require("path");
-const { processLog } = require("../utils/alertEngine"); // Import the alert engine
+const TrafficLog = require('./mongoSchemas/trafficLogSchema');
 
-// Define the paths
-const dataDir = path.join(__dirname, "../data");
-const trafficLogsPath = path.join(dataDir, "trafficLogs.json");
-
-// Ensure the data directory exists
-const ensureDataDirectory = () => {
-    if (!fs.existsSync(dataDir)) {
-        fs.mkdirSync(dataDir, { recursive: true });
-    }
+// Add a new traffic log
+const addLog = async (deviceIp, logData) => {
+  try {
+    const newLog = new TrafficLog({
+      deviceIp,
+      ...logData,
+      timestamp: logData.timestamp || new Date()
+    });
+    
+    await newLog.save();
+    return { success: true, log: newLog };
+  } catch (error) {
+    console.error("Error adding traffic log:", error);
+    return { success: false, error: error.message };
+  }
 };
 
-// Initialize the logs file if it doesn't exist
-const initializeLogsFile = () => {
-    if (!fs.existsSync(trafficLogsPath)) {
-        fs.writeFileSync(trafficLogsPath, JSON.stringify({}, null, 2), "utf8");
+// Get logs for a specific device
+const getDeviceLogs = async (deviceIp, since = null) => {
+  try {
+    let query = { deviceIp };
+    
+    if (since) {
+      const sinceDate = new Date(since);
+      query.timestamp = { $gt: sinceDate };
     }
+    
+    const logs = await TrafficLog.find(query)
+      .sort({ timestamp: -1 })
+      .limit(1000); // Limit to prevent excessive data transfer
+      
+    return { success: true, logs };
+  } catch (error) {
+    console.error(`Error getting logs for device ${deviceIp}:`, error);
+    return { success: false, error: error.message };
+  }
 };
 
-// Read logs safely with error handling
-const readLogs = () => {
-    try {
-        ensureDataDirectory();
-        initializeLogsFile();
-        const data = fs.readFileSync(trafficLogsPath, "utf8");
-        return JSON.parse(data);
-    } catch (error) {
-        console.error("Error reading traffic logs:", error);
-        return {};
+// Get all traffic logs with optional filtering by time
+const getAllLogs = async (since = null, limit = 1000) => {
+  try {
+    let query = {};
+    
+    if (since) {
+      const sinceDate = new Date(since);
+      query.timestamp = { $gt: sinceDate };
     }
+    
+    const logs = await TrafficLog.find(query)
+      .sort({ timestamp: -1 })
+      .limit(limit);
+      
+    return { success: true, logs };
+  } catch (error) {
+    console.error("Error getting all logs:", error);
+    return { success: false, error: error.message };
+  }
 };
 
-// Write logs safely with error handling
-const writeLogs = (logs) => {
-    try {
-        ensureDataDirectory();
-        fs.writeFileSync(trafficLogsPath, JSON.stringify(logs, null, 2), "utf8");
-        return true;
-    } catch (error) {
-        console.error("Error writing traffic logs:", error);
-        return false;
-    }
+// Delete logs older than retention period
+const cleanupOldLogs = async (retentionDays = 30) => {
+  try {
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - retentionDays);
+    
+    const result = await TrafficLog.deleteMany({ timestamp: { $lt: cutoffDate } });
+    
+    return { 
+      success: true, 
+      message: `Deleted ${result.deletedCount} logs older than ${retentionDays} days` 
+    };
+  } catch (error) {
+    console.error("Error cleaning up old logs:", error);
+    return { success: false, error: error.message };
+  }
 };
 
-// Get traffic logs for a given device by IP address
-const getTrafficLogs = (ip) => {
-    const logs = readLogs();
-    // If IP is provided, return logs for that IP, otherwise return all logs
-    if (ip) {
-        return logs[ip] || [];
-    }
-    // Return all logs combined when no IP is specified
-    return Object.values(logs).reduce((allLogs, ipLogs) => allLogs.concat(ipLogs), []);
+// Get a summary of traffic logs for processing by the alert engine
+const getTrafficSummary = async (timeWindow = 300) => {
+  try {
+    // Calculate the cutoff time based on the maximum time window
+    const cutoffTime = new Date();
+    cutoffTime.setSeconds(cutoffTime.getSeconds() - timeWindow);
+    
+    // Get logs within the time window
+    const logs = await TrafficLog.find({ 
+      timestamp: { $gt: cutoffTime } 
+    });
+    
+    // Group by deviceIp
+    const deviceLogs = {};
+    
+    logs.forEach(log => {
+      if (!deviceLogs[log.deviceIp]) {
+        deviceLogs[log.deviceIp] = [];
+      }
+      deviceLogs[log.deviceIp].push(log);
+    });
+    
+    return deviceLogs;
+  } catch (error) {
+    console.error("Error getting traffic summary:", error);
+    return {};
+  }
 };
 
-// Add a new traffic log for a device
-const addTrafficLog = (ip, log) => {
-    try {
-        const logs = readLogs();
-        
-        // Initialize array for IP if it doesn't exist
-        if (!logs[ip]) {
-            logs[ip] = [];
-        }
-
-        // Add timestamp if not present
-        if (!log.timestamp) {
-            log.timestamp = new Date().toISOString();
-        }
-
-        // Add deviceIp to log object for alert processing
-        log.deviceIp = ip;
-
-        // Process the log against alert rules
-        processLog(ip, log);
-
-        // Limit the number of logs per device (optional, prevent file from growing too large)
-        const MAX_LOGS_PER_DEVICE = 1000;
-        if (logs[ip].length >= MAX_LOGS_PER_DEVICE) {
-            logs[ip] = logs[ip].slice(-MAX_LOGS_PER_DEVICE + 1);
-        }
-
-        // Add the new log
-        logs[ip].push(log);
-
-        // Save the updated logs
-        if (writeLogs(logs)) {
-            console.log(`✅ Traffic log saved for IP ${ip}`);
-            return true;
-        } else {
-            console.error(`❌ Failed to save traffic log for IP ${ip}`);
-            return false;
-        }
-    } catch (error) {
-        console.error("Error adding traffic log:", error);
-        return false;
+// Search logs with complex query
+const searchLogs = async (searchQuery, limit = 1000) => {
+  try {
+    // Parse search query to build MongoDB query
+    let query = {};
+    
+    // Simple implementation - extend this for more complex queries
+    if (searchQuery) {
+      if (searchQuery.includes('ip:')) {
+        const ip = searchQuery.split('ip:')[1].trim().split(' ')[0];
+        query.deviceIp = { $regex: ip, $options: 'i' };
+      }
+      
+      if (searchQuery.includes('severity:')) {
+        const severity = searchQuery.split('severity:')[1].trim().split(' ')[0].toUpperCase();
+        query.severity = severity;
+      }
+      
+      if (searchQuery.includes('protocol:')) {
+        const protocol = searchQuery.split('protocol:')[1].trim().split(' ')[0].toUpperCase();
+        query.protocol = { $regex: protocol, $options: 'i' };
+      }
+      
+      if (searchQuery.includes('content:')) {
+        const content = searchQuery.split('content:')[1].trim().split(' ')[0];
+        query.$or = [
+          { 'source.info': { $regex: content, $options: 'i' } },
+          { info: { $regex: content, $options: 'i' } }
+        ];
+      }
     }
-};
-
-// Get a summary of traffic logs
-const getTrafficSummary = () => {
-    try {
-        return readLogs();
-    } catch (error) {
-        console.error("Error getting traffic summary:", error);
-        return {};
-    }
+    
+    const logs = await TrafficLog.find(query)
+      .sort({ timestamp: -1 })
+      .limit(limit);
+      
+    return { 
+      success: true, 
+      logs,
+      query: JSON.stringify(query)
+    };
+  } catch (error) {
+    console.error("Error searching logs:", error);
+    return { success: false, error: error.message };
+  }
 };
 
 module.exports = {
-    getTrafficLogs,
-    addTrafficLog,
-    getTrafficSummary
+  addLog,
+  getDeviceLogs,
+  getAllLogs,
+  cleanupOldLogs,
+  getTrafficSummary,
+  searchLogs
 };

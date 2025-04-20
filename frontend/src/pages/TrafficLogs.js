@@ -586,7 +586,7 @@ const TrafficLogs = ({ unifiedView = false }) => {
             >
                 {suggestions.map((suggestion, index) => (
                     <div
-                        key={suggestion}
+                        key={`suggestion-${suggestion}-${index}`}  // Fixed key prop
                         className={`p-2 cursor-pointer hover:bg-gray-700 ${
                             index === selectedSuggestion ? 'bg-gray-700' : ''
                         }`}
@@ -663,7 +663,7 @@ const TrafficLogs = ({ unifiedView = false }) => {
                     <div>
                         <p className="text-gray-400">Total Events</p>
                         <motion.h3 
-                            key={statsData.totalEvents}
+                            key={`total-${statsData.totalEvents}`}
                             initial={{ scale: 1.05 }}
                             animate={{ scale: 1 }}
                             className="text-2xl font-bold text-white"
@@ -685,7 +685,7 @@ const TrafficLogs = ({ unifiedView = false }) => {
                     <div>
                         <p className="text-gray-400">Critical Alerts</p>
                         <motion.h3 
-                            key={statsData.criticalAlerts}
+                            key={`critical-${statsData.criticalAlerts}`}
                             initial={{ scale: 1.05 }}
                             animate={{ scale: 1 }}
                             className="text-2xl font-bold text-red-400"
@@ -709,7 +709,7 @@ const TrafficLogs = ({ unifiedView = false }) => {
                             {unifiedView ? 'Active Devices' : 'Connection Status'}
                         </p>
                         <motion.h3 
-                            key={unifiedView ? statsData.activeDevices : (deviceInfo.status || 'Unknown')}
+                            key={`active-${unifiedView ? statsData.activeDevices : (deviceInfo.status || 'Unknown')}`}
                             initial={{ scale: 1.05 }}
                             animate={{ scale: 1 }}
                             className={`text-2xl font-bold ${unifiedView ? 'text-green-400' : 
@@ -760,7 +760,7 @@ const TrafficLogs = ({ unifiedView = false }) => {
                 <tbody>
                     {filteredLogs.length > 0 ? filteredLogs.map((log, index) => (
                         <tr
-                            key={`${log.timestamp}-${index}`}
+                            key={log.id || `${log.timestamp}-${log.source?.srcIp || ''}-${index}`}
                             className="border-t border-gray-700 hover:bg-gray-700 cursor-pointer"
                             onClick={() => setSelectedEvent(log)}
                         >
@@ -965,8 +965,8 @@ const TrafficLogs = ({ unifiedView = false }) => {
                             </button>
                         </div>
                         <div className="space-y-2">
-                            {activeAlerts.slice(0, 3).map((alert) => (
-                                <div key={alert.id} className="bg-gray-800/50 p-3 rounded border border-red-900/50">
+                            {activeAlerts.slice(0, 3).map((alert, index) => (
+                                <div key={alert.id || `alert-${index}`} className="bg-gray-800/50 p-3 rounded border border-red-900/50">
                                     <div className="flex justify-between">
                                         <span className="font-medium text-white">{alert.ruleName}</span>
                                         <span className={`px-2 py-0.5 rounded-full text-xs ${
@@ -1006,7 +1006,7 @@ const TrafficLogs = ({ unifiedView = false }) => {
                     <div className="space-y-6">
                         <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 mb-6">
                             {[...Array(4)].map((_, i) => (
-                                <div key={i} className="bg-gray-800 p-6 rounded-lg animate-pulse">
+                                <div key={`placeholder-${i}`} className="bg-gray-800 p-6 rounded-lg animate-pulse">
                                     <div className="h-4 bg-gray-700 rounded w-2/3 mb-4"></div>
                                     <div className="h-8 bg-gray-700 rounded w-1/3"></div>
                                 </div>
@@ -1017,7 +1017,7 @@ const TrafficLogs = ({ unifiedView = false }) => {
                             <div className="h-6 bg-gray-700 rounded w-1/4 mb-6"></div>
                             <div className="space-y-4">
                                 {[...Array(5)].map((_, i) => (
-                                    <div key={i} className="h-10 bg-gray-700 rounded"></div>
+                                    <div key={`placeholder-row-${i}`} className="h-10 bg-gray-700 rounded"></div>
                                 ))}
                             </div>
                         </div>

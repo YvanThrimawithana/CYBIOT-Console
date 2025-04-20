@@ -113,12 +113,15 @@ const AlertRules = () => {
             let response;
             
             if (currentRule) {
-                // Update existing rule
-                response = await updateAlertRule(currentRule.id, formData);
+                // Update existing rule using _id instead of id for MongoDB documents
+                const ruleId = currentRule._id || currentRule.id;
+                console.log("Updating rule with ID:", ruleId);
+                
+                response = await updateAlertRule(ruleId, formData);
                 if (response.success) {
                     setRules(prevRules => 
                         prevRules.map(rule => 
-                            rule.id === currentRule.id ? response.rule : rule
+                            (rule._id === ruleId || rule.id === ruleId) ? response.rule : rule
                         )
                     );
                 }
@@ -137,13 +140,21 @@ const AlertRules = () => {
     };
 
     const handleDelete = async () => {
-        if (!currentRule) return;
+        if (!currentRule || !currentRule._id) {
+            setError("Cannot delete rule: Missing rule ID");
+            handleCloseDeleteModal();
+            return;
+        }
         
         try {
-            const response = await deleteAlertRule(currentRule.id);
+            // Use _id instead of id for MongoDB documents
+            const ruleId = currentRule._id;
+            console.log("Deleting rule with ID:", ruleId);
+            
+            const response = await deleteAlertRule(ruleId);
             if (response.success) {
                 setRules(prevRules => 
-                    prevRules.filter(rule => rule.id !== currentRule.id)
+                    prevRules.filter(rule => rule._id !== ruleId)
                 );
                 handleCloseDeleteModal();
             } else {
@@ -158,12 +169,16 @@ const AlertRules = () => {
     const handleToggleRule = async (rule) => {
         try {
             const updatedRule = { ...rule, enabled: !rule.enabled };
-            const response = await updateAlertRule(rule.id, updatedRule);
+            // Use _id instead of id for MongoDB documents
+            const ruleId = rule._id || rule.id;
+            console.log("Toggling rule with ID:", ruleId);
+            
+            const response = await updateAlertRule(ruleId, updatedRule);
             
             if (response.success) {
                 setRules(prevRules => 
                     prevRules.map(r => 
-                        r.id === rule.id ? response.rule : r
+                        r._id === ruleId ? response.rule : r
                     )
                 );
             }
@@ -319,7 +334,7 @@ const AlertRules = () => {
                                 <tbody className="bg-gray-800 divide-y divide-gray-700">
                                     {rules.map((rule) => (
                                         <motion.tr 
-                                            key={rule.id}
+                                            key={rule._id || rule.id}
                                             initial={{ opacity: 0 }}
                                             animate={{ opacity: 1 }}
                                             transition={{ duration: 0.3 }}

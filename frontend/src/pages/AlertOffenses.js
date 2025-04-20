@@ -84,7 +84,7 @@ const AlertOffenses = () => {
                     since = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
                     break;
                 case "7d":
-                    since = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
+                    since = new Date(now.getTime() - 7 * 24 * 60 * 60 * 0).toISOString();
                     break;
                 case "30d":
                     since = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
@@ -162,30 +162,40 @@ const AlertOffenses = () => {
     // Handle updating alert status
     const handleStatusChange = async (alertId, newStatus) => {
         try {
+            setError(null); // Clear any previous errors
+            
+            // Make sure we're using the MongoDB _id field
+            if (!alertId && selectedAlert) {
+                alertId = selectedAlert._id;
+            }
+            
+            console.log("Updating alert with ID:", alertId, "to status:", newStatus);
+            
             const response = await updateAlertStatus(alertId, newStatus);
             
             if (response.success) {
                 // Update the alert in state
                 setAlerts(prevAlerts => 
                     prevAlerts.map(alert => 
-                        alert.id === alertId 
+                        alert._id === alertId  
                             ? { ...alert, status: newStatus } 
                             : alert
                     )
                 );
                 
                 // If the alert is currently selected, update its status in the selection
-                if (selectedAlert?.id === alertId) {
+                if (selectedAlert?._id === alertId) {
                     setSelectedAlert(prevAlert => ({ ...prevAlert, status: newStatus }));
                 }
                 
                 // Update stats
                 loadAlerts(); // Reload all alerts to get updated stats
             } else {
-                throw new Error("Failed to update status");
+                throw new Error(response.error || "Failed to update status");
             }
         } catch (err) {
             setError(`Error updating alert status: ${err.message}`);
+            console.error("Error updating alert status:", err);
         }
     };
     
@@ -193,7 +203,7 @@ const AlertOffenses = () => {
     const handleViewAlert = async (alert) => {
         try {
             // If it's the same alert currently selected, close it
-            if (selectedAlert && selectedAlert.id === alert.id) {
+            if (selectedAlert && selectedAlert._id === alert._id) {
                 setSelectedAlert(null);
                 return;
             }
@@ -249,24 +259,37 @@ const AlertOffenses = () => {
     };
     
     const getTimeSince = (timestamp) => {
-        const msPerMinute = 60 * 1000;
-        const msPerHour = msPerMinute * 60;
-        const msPerDay = msPerHour * 24;
+        if (!timestamp) return 'N/A';
         
-        const elapsed = new Date() - new Date(timestamp);
-        
-        if (elapsed < msPerMinute) {
-            const seconds = Math.floor(elapsed / 1000);
-            return `${seconds} second${seconds !== 1 ? 's' : ''} ago`;
-        } else if (elapsed < msPerHour) {
-            const minutes = Math.floor(elapsed / msPerMinute);
-            return `${minutes} minute${minutes !== 1 ? 's' : ''} ago`;
-        } else if (elapsed < msPerDay) {
-            const hours = Math.floor(elapsed / msPerHour);
-            return `${hours} hour${hours !== 1 ? 's' : ''} ago`;
-        } else {
-            const days = Math.floor(elapsed / msPerDay);
-            return `${days} day${days !== 1 ? 's' : ''} ago`;
+        try {
+            const msPerMinute = 60 * 1000;
+            const msPerHour = msPerMinute * 60;
+            const msPerDay = msPerHour * 24;
+            
+            const now = new Date();
+            const timestampDate = new Date(timestamp);
+            
+            // Check if the date is valid
+            if (isNaN(timestampDate.getTime())) return 'Invalid date';
+            
+            const elapsed = now - timestampDate;
+            
+            if (elapsed < msPerMinute) {
+                const seconds = Math.floor(elapsed / 1000);
+                return `${seconds} second${seconds !== 1 ? 's' : ''} ago`;
+            } else if (elapsed < msPerHour) {
+                const minutes = Math.floor(elapsed / msPerMinute);
+                return `${minutes} minute${minutes !== 1 ? 's' : ''} ago`;
+            } else if (elapsed < msPerDay) {
+                const hours = Math.floor(elapsed / msPerHour);
+                return `${hours} hour${hours !== 1 ? 's' : ''} ago`;
+            } else {
+                const days = Math.floor(elapsed / msPerDay);
+                return `${days} day${days !== 1 ? 's' : ''} ago`;
+            }
+        } catch (error) {
+            console.error("Error calculating time since:", error);
+            return 'N/A';
         }
     };
     
@@ -429,8 +452,8 @@ const AlertOffenses = () => {
                     <div className="bg-gray-800 rounded-lg p-6">
                         <h3 className="text-lg font-medium text-white mb-4">Source Distribution</h3>
                         <div className="space-y-3">
-                            {Object.entries(alertsByDevice).map(([deviceIp, deviceAlerts]) => (
-                                <div key={deviceIp} className="flex justify-between items-center">
+                            {Object.entries(alertsByDevice).map(([deviceIp, deviceAlerts], index) => (
+                                <div key={`device-${deviceIp}-${index}`} className="flex justify-between items-center">
                                     <div className="flex items-center">
                                         <div className="w-2 h-2 rounded-full bg-blue-500 mr-2"></div>
                                         <span className="text-white overflow-hidden text-ellipsis">{deviceIp}</span>
@@ -555,12 +578,12 @@ const AlertOffenses = () => {
                                 ) : (
                                     filteredAlerts.map((alert) => (
                                         <motion.tr
-                                            key={alert.id}
+                                            key={alert._id}
                                             initial={{ opacity: 0 }}
                                             animate={{ opacity: 1 }}
                                             transition={{ duration: 0.3 }}
                                             className={`hover:bg-gray-700 cursor-pointer ${
-                                                selectedAlert?.id === alert.id ? 'bg-gray-700' : ''
+                                                selectedAlert?._id === alert._id ? 'bg-gray-700' : ''
                                             }`}
                                             onClick={() => handleViewAlert(alert)}
                                         >
@@ -591,7 +614,7 @@ const AlertOffenses = () => {
                                                 </span>
                                             </td>
                                             <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-400">
-                                                {getTimeSince(alert.timestamp)}
+                                                {getTimeSince(alert.updatedAt || alert.createdAt || alert.timestamp)}
                                             </td>
                                             <td className="px-6 py-4 whitespace-nowrap text-right text-sm">
                                                 <div className="flex justify-end space-x-2">
@@ -599,7 +622,7 @@ const AlertOffenses = () => {
                                                         <button
                                                             onClick={(e) => {
                                                                 e.stopPropagation();
-                                                                handleStatusChange(alert.id, "ACKNOWLEDGED");
+                                                                handleStatusChange(alert._id, "ACKNOWLEDGED");
                                                             }}
                                                             className="text-yellow-500 hover:text-yellow-400"
                                                             title="Acknowledge"
@@ -611,7 +634,7 @@ const AlertOffenses = () => {
                                                         <button
                                                             onClick={(e) => {
                                                                 e.stopPropagation();
-                                                                handleStatusChange(alert.id, "RESOLVED");
+                                                                handleStatusChange(alert._id, "RESOLVED");
                                                             }}
                                                             className="text-green-500 hover:text-green-400"
                                                             title="Resolve"
@@ -670,7 +693,7 @@ const AlertOffenses = () => {
                             <div className="space-x-2">
                                 {selectedAlert.status === "NEW" && (
                                     <button
-                                        onClick={() => handleStatusChange(selectedAlert.id, "ACKNOWLEDGED")}
+                                        onClick={() => handleStatusChange(selectedAlert._id, "ACKNOWLEDGED")}
                                         className="bg-gray-800/50 hover:bg-gray-700 text-white px-2 py-1 rounded text-xs"
                                     >
                                         Acknowledge
@@ -678,7 +701,7 @@ const AlertOffenses = () => {
                                 )}
                                 {(selectedAlert.status === "NEW" || selectedAlert.status === "ACKNOWLEDGED") && (
                                     <button
-                                        onClick={() => handleStatusChange(selectedAlert.id, "RESOLVED")}
+                                        onClick={() => handleStatusChange(selectedAlert._id, "RESOLVED")}
                                         className="bg-gray-800/50 hover:bg-gray-700 text-white px-2 py-1 rounded text-xs"
                                     >
                                         Resolve
@@ -743,7 +766,7 @@ const AlertOffenses = () => {
                                 {selectedAlert.matchedLogs && selectedAlert.matchedLogs.length > 0 ? (
                                     <div className="space-y-3">
                                         {selectedAlert.matchedLogs.map((log, index) => (
-                                            <div key={index} className="text-xs text-white border-l-2 border-blue-500 pl-2">
+                                            <div key={`log-${index}-${log.timestamp || index}`} className="text-xs text-white border-l-2 border-blue-500 pl-2">
                                                 <div className="text-gray-400 mb-1">
                                                     {formatTimestamp(log.timestamp)}
                                                 </div>

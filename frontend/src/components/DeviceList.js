@@ -39,9 +39,12 @@ const DeviceList = () => {
                                     {device.name}
                                     </Link>
                                     </td>
-                                    <td className="p-3">{device.ip}</td>
-                                    <td className="p-3 font-bold" style={{ color: device.status === "Active" ? "#4CAF50" : "#E53E3E" }}>
-                                        {device.status}
+                                    <td className="p-3">{device.ipAddress}</td>
+                                    <td className="p-3 font-bold" style={{ 
+                                        color: device.status === "Online" ? "#4CAF50" : 
+                                               device.status === "Offline" ? "#E53E3E" : "#F59E0B" 
+                                    }}>
+                                        {device.status || "Unknown"}
                                     </td>
                                     <td className="p-3">
                                         <button 

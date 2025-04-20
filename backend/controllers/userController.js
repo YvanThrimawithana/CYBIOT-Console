@@ -1,48 +1,83 @@
-const { getUser, createUser } = require("../models/userModel");
+const { registerUser: register, loginUser: login } = require("../models/userModel");
 const jwt = require("jsonwebtoken");
-const bcrypt = require("bcryptjs");
 require("dotenv").config();
 
 const tokenBlacklist = new Set();
 
 const loginUser = async (req, res) => {
     const { username, password } = req.body;
-    const user = await getUser(username);
-
-    if (!user || !(await bcrypt.compare(password, user.password))) {
-        return res.status(401).json({ error: "Invalid credentials" });
-    }
-
-    const token = jwt.sign(
-        { username: user.username },
-        process.env.JWT_SECRET,
-        { expiresIn: "24h" } // Increased from 1h to 24h
-    );
     
-    const refreshToken = jwt.sign(
-        { userId: user.id, username: user.username },
-        process.env.REFRESH_TOKEN_SECRET,
-        { expiresIn: '7d' }
-    );
+    if (!username || !password) {
+        return res.status(400).json({ error: "Username and password are required" });
+    }
+    
+    try {
+        console.log(`Attempting login for user: ${username}`);
+        const result = await login(username, password);
 
-    res.json({
-        token,
-        refreshToken,
-        userId: user.id,
-        username: user.username
-    });
+        if (!result.success) {
+            console.log(`Login failed for ${username}: ${result.error}`);
+            return res.status(401).json({ error: result.error || "Invalid credentials" });
+        }
+
+        // Generate JWT token
+        const token = jwt.sign(
+            { userId: result.user._id, username: result.user.username, role: result.user.role },
+            process.env.JWT_SECRET || 'your_jwt_secret',
+            { expiresIn: "24h" }
+        );
+        
+        // Generate refresh token
+        const refreshToken = jwt.sign(
+            { userId: result.user._id, username: result.user.username },
+            process.env.REFRESH_TOKEN_SECRET || process.env.JWT_SECRET || 'your_refresh_secret',
+            { expiresIn: '7d' }
+        );
+
+        console.log(`User ${username} logged in successfully`);
+        
+        res.json({
+            token,
+            refreshToken,
+            userId: result.user._id,
+            username: result.user.username,
+            role: result.user.role
+        });
+    } catch (error) {
+        console.error("Login error:", error);
+        res.status(500).json({ error: "Login failed: " + error.message });
+    }
 };
 
 const registerUser = async (req, res) => {
     const { username, password } = req.body;
-    const existingUser = await getUser(username);
 
-    if (existingUser) {
-        return res.status(400).json({ error: "Username already taken" });
+    if (!username || !password) {
+        return res.status(400).json({ error: "Username and password are required" });
     }
 
-    const newUser = await createUser(username, password);
-    res.status(201).json({ message: "User registered successfully", username: newUser.username });
+    try {
+        console.log(`Attempting to register user: ${username}`);
+        const result = await register({ 
+            username, 
+            password
+        });
+
+        if (!result.success) {
+            console.log(`Registration failed for ${username}: ${result.error}`);
+            return res.status(400).json({ error: result.error || "Registration failed" });
+        }
+
+        console.log(`User ${username} registered successfully`);
+        res.status(201).json({ 
+            success: true,
+            message: "User registered successfully", 
+            username: result.user.username
+        });
+    } catch (error) {
+        console.error("Registration error:", error);
+        res.status(500).json({ error: "Registration failed: " + error.message });
+    }
 };
 
 const logoutUser = (req, res) => {
@@ -50,18 +85,18 @@ const logoutUser = (req, res) => {
     if (token) {
         tokenBlacklist.add(token);
     }
-    res.json({ message: "Logged out successfully" });
+    res.json({ success: true, message: "Logged out successfully" });
 };
 
 const authenticateToken = (req, res, next) => {
     const token = req.headers.authorization?.split(" ")[1];
-
+    
     if (!token || tokenBlacklist.has(token)) {
-        return res.status(403).json({ error: "Unauthorized" });
+        return res.status(401).json({ error: "Unauthorized" });
     }
 
-    jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
-        if (err) return res.status(403).json({ error: "Token invalid" });
+    jwt.verify(token, process.env.JWT_SECRET || 'your_jwt_secret', (err, user) => {
+        if (err) return res.status(401).json({ error: "Token invalid" });
         req.user = user;
         next();
     });
@@ -75,16 +110,19 @@ const refreshToken = async (req, res) => {
         }
 
         // Verify refresh token
-        const decoded = jwt.verify(refreshToken, process.env.REFRESH_TOKEN_SECRET);
+        const decoded = jwt.verify(
+            refreshToken, 
+            process.env.REFRESH_TOKEN_SECRET || process.env.JWT_SECRET || 'your_refresh_secret'
+        );
         
         // Generate new access token
         const newAccessToken = jwt.sign(
-            { userId: decoded.userId, email: decoded.email },
-            process.env.JWT_SECRET,
-            { expiresIn: '1h' } // Longer expiry
+            { userId: decoded.userId, username: decoded.username },
+            process.env.JWT_SECRET || 'your_jwt_secret',
+            { expiresIn: '24h' }
         );
 
-        res.json({ token: newAccessToken });
+        res.json({ success: true, token: newAccessToken });
     } catch (error) {
         console.error('Token refresh failed:', error);
         res.status(401).json({ error: 'Invalid refresh token' });

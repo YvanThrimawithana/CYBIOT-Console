@@ -1,6 +1,6 @@
-const { getAllRules, getRuleById } = require("../models/alertRulesModel");
-const { createAlert } = require("../models/alertsModel");
-const trafficModel = require("../models/trafficModel");
+const AlertRule = require('../models/mongoSchemas/alertRuleSchema');
+const TrafficLog = require('../models/mongoSchemas/trafficLogSchema');
+const alertsModel = require('../models/alertsModel');
 
 // Cache to store events for threshold detection
 const eventCache = {
@@ -28,249 +28,247 @@ const cleanupCache = (ruleId, deviceIp, timeWindow) => {
     );
 };
 
-// Evaluate if a log entry matches a condition
-const evaluateCondition = (log, condition) => {
-    try {
-        // Check for complex conditions with AND/OR operators
-        if (condition.includes(" AND ")) {
-            const conditions = condition.split(" AND ");
-            return conditions.every(subCondition => evaluateSimpleCondition(log, subCondition.trim()));
-        } else if (condition.includes(" OR ")) {
-            const conditions = condition.split(" OR ");
-            return conditions.some(subCondition => evaluateSimpleCondition(log, subCondition.trim()));
-        } else {
-            // Simple condition
-            return evaluateSimpleCondition(log, condition);
-        }
-    } catch (error) {
-        console.error("Error evaluating condition:", error);
-        return false;
-    }
-};
-
-// Evaluate a simple condition without AND/OR operators
-const evaluateSimpleCondition = (log, condition) => {
-    // Handle field searches with colon syntax (e.g., "source.srcIp:192.168.1.1")
-    if (condition.includes(":")) {
-        const [fieldPath, value] = condition.split(":");
-        
-        // Navigate through nested properties using the field path
-        const parts = fieldPath.split('.');
-        let currentValue = log;
-        
-        for (const part of parts) {
-            if (!currentValue || typeof currentValue !== 'object') {
-                return false;
-            }
-            currentValue = currentValue[part];
-        }
-        
-        // Check if the field value contains the search value
-        if (currentValue !== undefined && currentValue !== null) {
-            const fieldValueStr = String(currentValue).toLowerCase();
-            const searchValueStr = value.toLowerCase();
-            return fieldValueStr.includes(searchValueStr);
-        }
-        
-        return false;
+// Parse and evaluate rule condition
+const evaluateCondition = (condition, log) => {
+  try {
+    // Handle AND conditions
+    if (condition.toLowerCase().includes(' and ')) {
+      const subConditions = condition.split(/\s+and\s+/i);
+      return subConditions.every(subCond => evaluateCondition(subCond.trim(), log));
     }
     
-    // Legacy condition types support for backward compatibility
-    // 1. Simple IP match
-    if (condition.includes("ip:")) {
-        const ipToMatch = condition.split("ip:")[1].trim();
-        // Check source or destination IP
-        const sourceIp = log.source?.srcIp || '';
-        const destIp = log.source?.dstIp || '';
-        const deviceIp = log.deviceIp || '';
-        
-        return sourceIp.includes(ipToMatch) || 
-                destIp.includes(ipToMatch) || 
-                deviceIp.includes(ipToMatch);
+    // Handle OR conditions
+    if (condition.toLowerCase().includes(' or ')) {
+      const subConditions = condition.split(/\s+or\s+/i);
+      return subConditions.some(subCond => evaluateCondition(subCond.trim(), log));
     }
     
-    // 2. Protocol match
-    if (condition.includes("protocol:")) {
-        const protocolToMatch = condition.split("protocol:")[1].trim().toUpperCase();
-        const protocol = (log.source?.protocol || '').toUpperCase();
-        return protocol.includes(protocolToMatch);
+    // Handle field:value syntax (search-style)
+    if (condition.includes(':')) {
+      const [field, value] = condition.split(':').map(part => part.trim());
+      const fieldPath = field.replace(/\./g, '.'); // Keep dot notation
+      const cleanValue = value.replace(/^['"]|['"]$/g, '').toLowerCase(); // Remove quotes and convert to lowercase
+      
+      // Get the actual value from the log object
+      const actualValue = getNestedValue(log, fieldPath);
+      
+      // If the field doesn't exist, no match
+      if (actualValue === undefined) return false;
+      
+      // Convert to string and lowercase for case-insensitive comparison
+      const actualValueStr = String(actualValue).toLowerCase();
+      
+      // Check if the value contains the search term
+      return actualValueStr.includes(cleanValue);
     }
     
-    // 3. Content match in info field
-    if (condition.includes("content:")) {
-        const contentToMatch = condition.split("content:")[1].trim().toLowerCase();
-        const info = (log.source?.info || '').toLowerCase();
-        return info.includes(contentToMatch);
+    // Fallback to the old-style equality checks
+    if (condition.includes('==')) {
+      const [field, value] = condition.split('==').map(part => part.trim());
+      const cleanValue = value.replace(/^['"]|['"]$/g, ''); // Remove quotes
+      return getNestedValue(log, field) == cleanValue;
     }
     
-    // 4. Generic JSON match (check entire log)
-    const logString = JSON.stringify(log).toLowerCase();
-    return logString.includes(condition.toLowerCase());
-};
-
-// Process a log against a specific rule
-const processLogAgainstRule = (rule, deviceIp, log) => {
-    // Skip if rule is disabled
-    if (!rule.enabled) return false;
-    
-    // Check if the log matches the rule condition
-    const isMatch = evaluateCondition(log, rule.condition);
-    
-    if (isMatch) {
-        console.log(`🚨 Rule "${rule.name}" matched for device ${deviceIp}`);
-        
-        // Cache the event for threshold detection
-        const cacheKey = `${rule.id}-${deviceIp}`;
-        
-        if (!eventCache[cacheKey]) {
-            eventCache[cacheKey] = {
-                events: [],
-                lastTrigger: 0
-            };
-        }
-        
-        // Clean up old events
-        cleanupCache(rule.id, deviceIp, rule.timeWindow);
-        
-        // Add current event
-        eventCache[cacheKey].events.push({
-            timestamp: Date.now(),
-            log: log
-        });
-        
-        // Check if threshold is met
-        if (eventCache[cacheKey].events.length >= rule.threshold) {
-            // Check if we haven't triggered recently to avoid alert storms
-            const now = Date.now();
-            const minTriggerInterval = 60 * 1000; // 60 seconds minimum between alerts
-            
-            if ((now - eventCache[cacheKey].lastTrigger) > minTriggerInterval) {
-                // Update last trigger time
-                eventCache[cacheKey].lastTrigger = now;
-                
-                // Create alert
-                const alertData = {
-                    ruleId: rule.id,
-                    ruleName: rule.name,
-                    description: rule.description,
-                    deviceIp: deviceIp,
-                    severity: rule.severity,
-                    matchedLogs: eventCache[cacheKey].events.map(e => e.log)
-                };
-                
-                const result = createAlert(alertData);
-                
-                if (result.success && !result.deduplicated) {
-                    console.log(`✅ Alert created for rule "${rule.name}" on device ${deviceIp}`);
-                    return true;
-                } else if (result.deduplicated) {
-                    console.log(`⚠️ Alert deduplicated for rule "${rule.name}" on device ${deviceIp}`);
-                } else {
-                    console.error(`❌ Failed to create alert for rule "${rule.name}": ${result.error}`);
-                }
-            } else {
-                console.log(`⚠️ Suppressing alert for rule "${rule.name}" (triggered recently)`);
-            }
-        }
+    if (condition.includes('!=')) {
+      const [field, value] = condition.split('!=').map(part => part.trim());
+      const cleanValue = value.replace(/^['"]|['"]$/g, ''); // Remove quotes
+      return getNestedValue(log, field) != cleanValue;
     }
     
+    if (condition.toLowerCase().includes('contains')) {
+      const [field, value] = condition.split(/contains/i).map(part => part.trim());
+      const cleanValue = value.replace(/^['"]|['"]$/g, ''); // Remove quotes
+      const fieldValue = getNestedValue(log, field);
+      return typeof fieldValue === 'string' && fieldValue.toLowerCase().includes(cleanValue.toLowerCase());
+    }
+    
+    // For empty/invalid conditions, don't match
     return false;
+  } catch (error) {
+    console.error(`Error evaluating condition "${condition}":`, error);
+    return false;
+  }
 };
 
-// Process a single traffic log against all rules
-const processLog = (deviceIp, log) => {
+// Get nested value from object
+const getNestedValue = (obj, path) => {
+  return path.split('.').reduce((acc, part) => {
+    if (acc === undefined || acc === null) return undefined;
+    return acc[part]; 
+  }, obj);
+};
+
+// Process a single log against all active rules
+const processLog = async (log) => {
     try {
         // Get all active rules
-        const rules = getAllRules().filter(rule => rule.enabled);
-        let alertsCreated = 0;
+        const result = await AlertRule.find({ enabled: true });
+        const rules = result || [];
         
-        // Process the log against each rule in parallel for better performance
-        const results = rules.map(rule => processLogAgainstRule(rule, deviceIp, log));
-        alertsCreated = results.filter(Boolean).length;
+        console.log(`Processing log against ${rules.length} active rules`);
         
-        return alertsCreated;
+        if (!log.deviceIp && log.source && log.source.srcIp) {
+            log.deviceIp = log.source.srcIp;
+        }
+        
+        if (!log.timestamp) {
+            log.timestamp = new Date();
+        }
+        
+        const triggeredAlerts = [];
+        
+        // Check each rule
+        for (const rule of rules) {
+            const isMatch = evaluateCondition(rule.condition, log);
+            console.log(`Rule ${rule.name} match: ${isMatch}`);
+            
+            if (isMatch) {
+                // Add to event cache for this rule and device
+                const cacheKey = `${rule._id}-${log.deviceIp}`;
+                
+                if (!eventCache[cacheKey]) {
+                    eventCache[cacheKey] = {
+                        events: [],
+                        lastTrigger: null
+                    };
+                }
+                
+                // Add this event to the cache
+                eventCache[cacheKey].events.push({
+                    timestamp: Date.now(),
+                    log
+                });
+                
+                // Check if threshold is exceeded
+                const timeWindowMs = rule.timeWindow * 1000;
+                const now = Date.now();
+                
+                // Clean up old events first
+                cleanupCache(rule._id, log.deviceIp, rule.timeWindow);
+                
+                const eventCount = eventCache[cacheKey].events.length;
+                const lastTrigger = eventCache[cacheKey].lastTrigger;
+                
+                // Only trigger if threshold exceeded and not triggered recently
+                if (eventCount >= rule.threshold && 
+                    (!lastTrigger || (now - lastTrigger) > timeWindowMs)) {
+                    
+                    console.log(`🚨 Rule "${rule.name}" triggered! ${eventCount} events in ${rule.timeWindow}s`);
+                    
+                    // Create alert
+                    const alert = await alertsModel.createAlert({
+                        ruleId: rule._id,
+                        ruleName: rule.name,
+                        description: rule.description || `Multiple matching events for rule: ${rule.name}`,
+                        severity: rule.severity,
+                        deviceIp: log.deviceIp,
+                        timestamp: new Date(),
+                        matchCount: eventCount,
+                        matchedLogs: eventCache[cacheKey].events.map(e => e.log)
+                    });
+                    
+                    // Update the last trigger time
+                    eventCache[cacheKey].lastTrigger = now;
+                    
+                    // Add to triggered alerts for this run
+                    if (alert) {
+                        triggeredAlerts.push(alert);
+                    }
+                }
+            }
+        }
+        
+        return triggeredAlerts;
     } catch (error) {
         console.error("Error processing log against rules:", error);
-        return 0;
+        return [];
     }
 };
 
-// Process existing logs against a specific rule
+// Process a batch of logs
+const processBatch = async (logs) => {
+  const triggeredAlerts = [];
+  
+  for (const log of logs) {
+    const alerts = await processLog(log);
+    triggeredAlerts.push(...alerts);
+  }
+  
+  return triggeredAlerts;
+};
+
+// Process existing logs for a newly added/enabled rule
 const processExistingLogs = async (rule) => {
-    try {
-        if (!rule.enabled) {
-            console.log(`⚠️ Rule ${rule.name} is disabled, skipping processing of existing logs`);
-            return 0;
-        }
-        
-        console.log(`🔍 Processing existing logs against rule "${rule.name}"...`);
-        
-        // Get all traffic logs from the traffic model
-        const trafficSummary = trafficModel.getTrafficSummary();
-        let alertsCreated = 0;
-        
-        // Process logs for each device
-        for (const [deviceIp, logs] of Object.entries(trafficSummary)) {
-            if (!Array.isArray(logs) || logs.length === 0) continue;
-            
-            console.log(`📊 Processing ${logs.length} logs for device ${deviceIp}...`);
-            
-            // Process only logs from the last timeWindow seconds
-            const now = Date.now();
-            const timeWindowMs = (rule.timeWindow || 300) * 1000;
-            const recentLogs = logs.filter(log => 
-                (now - new Date(log.timestamp).getTime()) < timeWindowMs
-            );
-            
-            console.log(`📊 Found ${recentLogs.length} recent logs within time window`);
-            
-            // For performance reasons, limit the number of logs to process
-            const logsToProcess = recentLogs.slice(0, 1000); // Process up to 1000 logs per device
-            
-            // Process each log against this rule
-            let matchCount = 0;
-            logsToProcess.forEach(log => {
-                if (processLogAgainstRule(rule, deviceIp, log)) {
-                    alertsCreated++;
-                    matchCount++;
-                }
-            });
-            
-            console.log(`✅ Processed ${logsToProcess.length} logs for device ${deviceIp}, found ${matchCount} matches`);
-        }
-        
-        console.log(`✅ Finished processing existing logs against rule "${rule.name}", created ${alertsCreated} alerts`);
-        return alertsCreated;
-    } catch (error) {
-        console.error(`Error processing existing logs against rule ${rule.name}:`, error);
-        return 0;
+  try {
+    // Skip if rule is disabled
+    if (!rule.enabled) {
+      return [];
     }
+    
+    // Get logs from the past time window
+    const timeWindow = rule.timeWindow || 300; // Default to 5 minutes
+    const cutoffTime = new Date();
+    cutoffTime.setSeconds(cutoffTime.getSeconds() - timeWindow);
+    
+    const logs = await TrafficLog.find({ 
+      timestamp: { $gt: cutoffTime } 
+    }).limit(1000);
+    
+    if (!logs || logs.length === 0) {
+      return [];
+    }
+    
+    console.log(`Checking ${logs.length} existing logs against new rule "${rule.name}"`);
+    
+    const matchedLogs = logs.filter(log => evaluateCondition(rule.condition, log));
+    
+    // If we have enough matches to trigger an alert (based on threshold)
+    if (matchedLogs.length >= rule.threshold) {
+      // Group logs by device
+      const deviceLogs = {};
+      
+      matchedLogs.forEach(log => {
+        if (!deviceLogs[log.deviceIp]) {
+          deviceLogs[log.deviceIp] = [];
+        }
+        deviceLogs[log.deviceIp].push(log);
+      });
+      
+      // Create alert for each device that has enough matches
+      const triggeredAlerts = [];
+      
+      for (const [deviceIp, logs] of Object.entries(deviceLogs)) {
+        if (logs.length >= rule.threshold) {
+          const alertData = {
+            ruleId: rule._id,
+            ruleName: rule.name,
+            deviceIp,
+            severity: rule.severity,
+            description: rule.description || `Alert triggered by rule: ${rule.name}`,
+            matchedLogs: logs.slice(0, 50) // Limit to 50 logs
+          };
+          
+          const result = await alertsModel.createAlert(alertData);
+          
+          if (result.success) {
+            triggeredAlerts.push(result.alert);
+          }
+        }
+      }
+      
+      return triggeredAlerts;
+    }
+    
+    return [];
+  } catch (error) {
+    console.error(`Error processing existing logs for rule "${rule.name}":`, error);
+    return [];
+  }
 };
 
-// Process all existing logs against all rules
-const processAllExistingLogs = async () => {
-    try {
-        const rules = getAllRules().filter(rule => rule.enabled);
-        console.log(`🔍 Processing existing logs against ${rules.length} rules...`);
-        
-        let totalAlerts = 0;
-        
-        for (const rule of rules) {
-            const alertsCreated = await processExistingLogs(rule);
-            totalAlerts += alertsCreated;
-        }
-        
-        console.log(`✅ Finished processing all existing logs, created ${totalAlerts} alerts`);
-        return totalAlerts;
-    } catch (error) {
-        console.error("Error processing all existing logs:", error);
-        return 0;
-    }
-};
-
-module.exports = { 
-    processLog, 
-    evaluateCondition,
-    processExistingLogs,
-    processAllExistingLogs
+module.exports = {
+  processLog,
+  processBatch,
+  processExistingLogs,
+  evaluateCondition
 };

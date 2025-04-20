@@ -20,7 +20,7 @@ const {
     updateAlertStatusHandler,
     evaluateExistingLogs,
     // CSV report generation
-    generateCSVReport
+    generateCSVReportHandler
 } = require("../controllers/trafficController");
 
 const router = express.Router();
@@ -49,6 +49,6 @@ router.put("/alert-status/:id", updateAlertStatusHandler);
 router.post("/evaluate-logs", evaluateExistingLogs);
 
 // CSV report generation route
-router.post("/generate-csv-report", generateCSVReport);
+router.post("/generate-csv-report", generateCSVReportHandler);
 
 module.exports = router;

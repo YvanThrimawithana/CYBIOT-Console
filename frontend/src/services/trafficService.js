@@ -109,10 +109,21 @@ export const updateAlertRule = async (ruleId, ruleData) => {
 
 export const deleteAlertRule = async (ruleId) => {
     try {
+        if (!ruleId) {
+            console.error('Invalid rule ID:', ruleId);
+            throw new Error('Invalid rule ID provided');
+        }
+        
+        console.log(`Sending delete request for rule ID: ${ruleId}`);
         const response = await fetch(`http://localhost:5000/api/traffic/rules/${ruleId}`, {
             method: 'DELETE',
         });
-        if (!response.ok) throw new Error('Failed to delete alert rule');
+        
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.error || 'Failed to delete alert rule');
+        }
+        
         return await response.json();
     } catch (error) {
         console.error('Error deleting alert rule:', error);
@@ -180,6 +191,15 @@ export const getAllSystemAlerts = async (filters = {}) => {
 
 export const updateAlertStatus = async (alertId, newStatus) => {
     try {
+        // Check if alertId is defined
+        if (!alertId) {
+            console.error('Alert ID is undefined or empty');
+            return {
+                success: false,
+                error: 'Invalid alert ID: Alert ID cannot be undefined'
+            };
+        }
+
         const response = await fetch(`http://localhost:5000/api/traffic/alert-status/${alertId}`, {
             method: 'PUT',
             headers: {
@@ -187,11 +207,21 @@ export const updateAlertStatus = async (alertId, newStatus) => {
             },
             body: JSON.stringify({ status: newStatus }),
         });
-        if (!response.ok) throw new Error('Failed to update alert status');
-        return await response.json();
+        
+        const data = await response.json();
+        
+        if (!response.ok) {
+            console.error('Server returned error:', data);
+            throw new Error(data.error || 'Failed to update alert status');
+        }
+        
+        return data;
     } catch (error) {
         console.error('Error updating alert status:', error);
-        throw error;
+        return {
+            success: false,
+            error: error.message || 'Failed to update alert status'
+        };
     }
 };
 

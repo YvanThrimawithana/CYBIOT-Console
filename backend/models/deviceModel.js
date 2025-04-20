@@ -1,58 +1,132 @@
-const fs = require("fs");
-const path = require("path");
-const { v4: uuidv4 } = require("uuid"); // Import UUID for unique IDs
+const mongoose = require('mongoose');
+const Device = require('./mongoSchemas/deviceSchema');
 
-const devicesPath = path.join(__dirname, "../data/devices.json");
-
-const getAllDevices = () => {
-    if (!fs.existsSync(devicesPath)) return [];
-    return JSON.parse(fs.readFileSync(devicesPath, "utf8"));
+// Get all devices
+const getAllDevices = async () => {
+  try {
+    const devices = await Device.find({});
+    return { success: true, devices };
+  } catch (error) {
+    console.error('Error retrieving devices:', error);
+    return { success: false, error: error.message };
+  }
 };
 
-const saveDevice = (device) => {
-    const devices = getAllDevices();
-
-    // Check if device already exists based on IP
-    const existingDevice = devices.find(d => d.ip === device.ip);
-    if (existingDevice) return existingDevice;
-
-    const newDevice = {
-        id: uuidv4(), // Assign a unique ID
-        ...device
-    };
-
-    devices.push(newDevice);
-    fs.writeFileSync(devicesPath, JSON.stringify(devices, null, 2), "utf8");
-    return newDevice;
-};
-
-const updateDeviceStatus = (ip, status) => {
-    const devices = getAllDevices();
-    let found = false;
-
-    const updatedDevices = devices.map(device => {
-        if (device.ip === ip) {
-            found = true;
-            return { ...device, status };
-        }
-        return device;
-    });
-
-    if (!found) {
-        console.log(`⚠️ Device with IP ${ip} not found in database!`);
-        return;
+// Get device by ID
+const getDeviceById = async (deviceId) => {
+  try {
+    const device = await Device.findOne({ deviceId });
+    
+    if (!device) {
+      return { success: false, error: 'Device not found' };
     }
-
-    fs.writeFileSync(devicesPath, JSON.stringify(updatedDevices, null, 2), "utf8");
-    console.log(`✅ Device with IP ${ip} status updated to ${status}`);
+    
+    return { success: true, device };
+  } catch (error) {
+    console.error(`Error retrieving device ${deviceId}:`, error);
+    return { success: false, error: error.message };
+  }
 };
 
-
-
-const deleteDeviceFromStorage = (id) => {
-    let devices = getAllDevices();
-    devices = devices.filter(device => device.id !== id);
-    fs.writeFileSync(devicesPath, JSON.stringify(devices, null, 2), "utf8");
+// Add a new device
+const addDevice = async (deviceData) => {
+  try {
+    // Generate a unique deviceId if not provided
+    if (!deviceData.deviceId) {
+      deviceData.deviceId = new mongoose.Types.ObjectId().toString();
+    }
+    
+    // Check for existing device
+    const existingDevice = await Device.findOne({ 
+      $or: [
+        { deviceId: deviceData.deviceId },
+        { ipAddress: deviceData.ipAddress }
+      ]
+    });
+    
+    if (existingDevice) {
+      return { success: false, error: 'Device with this ID or IP address already exists' };
+    }
+    
+    const newDevice = new Device(deviceData);
+    await newDevice.save();
+    
+    return { success: true, device: newDevice };
+  } catch (error) {
+    console.error('Error creating device:', error);
+    return { success: false, error: error.message };
+  }
 };
 
-module.exports = { getAllDevices, saveDevice, updateDeviceStatus, deleteDeviceFromStorage };
+// Update device
+const updateDevice = async (deviceId, deviceData) => {
+  try {
+    const device = await Device.findOneAndUpdate(
+      { deviceId },
+      deviceData,
+      { new: true, runValidators: true }
+    );
+    
+    if (!device) {
+      return { success: false, error: 'Device not found' };
+    }
+    
+    return { success: true, device };
+  } catch (error) {
+    console.error(`Error updating device ${deviceId}:`, error);
+    return { success: false, error: error.message };
+  }
+};
+
+// Delete device
+const deleteDevice = async (deviceId) => {
+  try {
+    const device = await Device.findOneAndDelete({ deviceId });
+    
+    if (!device) {
+      return { success: false, error: 'Device not found' };
+    }
+    
+    return { success: true };
+  } catch (error) {
+    console.error(`Error deleting device ${deviceId}:`, error);
+    return { success: false, error: error.message };
+  }
+};
+
+// Update device status
+const updateDeviceStatus = async (deviceIp, status) => {
+  try {
+    // Look up device by IP address instead of deviceId
+    const device = await Device.findOneAndUpdate(
+      { ipAddress: deviceIp },
+      { 
+        status,
+        lastSeen: new Date()
+      },
+      { new: true }
+    );
+    
+    if (!device) {
+      console.log(`No device found with IP: ${deviceIp}`);
+      return { success: false, error: 'Device not found' };
+    }
+    
+    console.log(`✅ Updated status for ${device.name} (${deviceIp}) to ${status}`);
+    return { success: true, device };
+  } catch (error) {
+    console.error(`Error updating device status for IP ${deviceIp}:`, error);
+    return { success: false, error: error.message };
+  }
+};
+
+module.exports = {
+  getAllDevices,
+  getDeviceById,
+  addDevice: addDevice,
+  saveDevice: addDevice, // Add alias for saveDevice to match controller imports
+  updateDevice,
+  deleteDevice,
+  deleteDeviceFromStorage: deleteDevice, // Add alias for deleteDeviceFromStorage to match controller imports
+  updateDeviceStatus,
+};

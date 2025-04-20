@@ -1,12 +1,84 @@
 require("dotenv").config(); // Ensure this is at the top to load env vars first
 const express = require("express");
 const cors = require("cors");
+const connectDB = require('./config/database');
+const { verifyDbSetup } = require('./utils/dbSetup');
+const { fixEmailIndex } = require('./utils/fixEmailIndex');
 const userRoutes = require("./routes/userRoutes");
 const deviceRoutes = require("./routes/deviceRoutes");
 const trafficLogRoutes = require("./routes/trafficRoutes");
 const firmwareRoute = require("./routes/firmwareRoute");
 const alertRoutes = require("./routes/alertRoutes"); // Import alert routes
 const { startTrafficMonitoring } = require("./utils/trafficMonitor"); // Import traffic monitoring
+const fs = require('fs');
+const path = require('path');
+const userModel = require('./models/userModel');
+const User = require('./models/mongoSchemas/userSchema');
+
+// Connect to MongoDB and verify setup
+connectDB().then(async () => {
+  console.log('MongoDB connected, verifying database setup...');
+  
+  // Fix email index issue before anything else - don't disconnect after
+  await fixEmailIndex(false);
+  
+  // Verify database setup and create test user if needed
+  await verifyDbSetup();
+  
+  // Check if MongoDB is properly connected
+  try {
+    // Count users in MongoDB
+    const userCount = await User.countDocuments();
+    console.log(`Found ${userCount} user(s) in MongoDB`);
+    
+    if (userCount > 0) {
+      // List usernames to verify data
+      const users = await User.find().select('username role -_id');
+      console.log('Users in database:', users.map(u => `${u.username} (${u.role})`));
+    }
+  } catch (error) {
+    console.error('Error checking users in MongoDB:', error);
+  }
+}).catch(err => {
+  console.error('Failed to connect to MongoDB:', err);
+  process.exit(1);
+});
+
+// Perform initial migration of users from JSON to MongoDB
+const migrateUsersOnStartup = async () => {
+  try {
+    const usersJsonPath = path.join(__dirname, './data/users.json');
+    
+    // Check if the file exists
+    if (fs.existsSync(usersJsonPath)) {
+      console.log('Found users.json file, checking for migration needs...');
+      const usersData = JSON.parse(fs.readFileSync(usersJsonPath, 'utf8'));
+      
+      // Only migrate if there are users in the JSON file
+      if (usersData && usersData.length > 0) {
+        console.log(`Starting migration of ${usersData.length} users from JSON to MongoDB...`);
+        const result = await userModel.migrateUsersFromJson(usersData);
+        
+        if (result.success) {
+          console.log('Successfully migrated users from JSON to MongoDB');
+          
+          // Optionally rename the original file as backup
+          const backupPath = path.join(__dirname, './data/users.json.bak');
+          fs.renameSync(usersJsonPath, backupPath);
+          console.log('Renamed users.json to users.json.bak');
+        } else {
+          console.error('Failed to migrate users:', result.error);
+        }
+      } else {
+        console.log('No users found in users.json, skipping migration');
+      }
+    } else {
+      console.log('No users.json file found, skipping migration');
+    }
+  } catch (error) {
+    console.error('Error during user migration:', error);
+  }
+};
 
 const app = express();
 app.use(cors({
@@ -38,10 +110,21 @@ if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
 
 const PORT = process.env.PORT || 5000;
 
-// Start traffic monitoring when the server starts
-startTrafficMonitoring();
+// Start traffic monitoring when the server starts (now async)
+const startServer = async () => {
+    try {
+        await startTrafficMonitoring();
+        
+        const server = app.listen(PORT, () => {
+            const serverIp = server.address().address;
+            console.log(`Server running on http://${serverIp}:${PORT}`);
+        });
+    } catch (error) {
+        console.error("Failed to start server:", error);
+    }
+};
 
-const server = app.listen(PORT, () => {
-    const serverIp = server.address().address;
-    console.log(`Server running on http://${serverIp}:${PORT}`);
-});
+// Run the migration when the server starts
+migrateUsersOnStartup();
+
+startServer();

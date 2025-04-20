@@ -22,7 +22,10 @@ export const onDeviceUpdate = (callback) => {
 
 export const addDevice = async (name, ip) => {
     try {
-        const response = await axios.post(`${API_URL}/add`, { name, ip });
+        const response = await axios.post(`${API_URL}/add`, { 
+            name, 
+            ipAddress: ip // Changed from ip to ipAddress to match backend expectations
+        });
         return response.data;
     } catch (error) {
         throw error.response ? error.response.data.error : "Network Error";

@@ -9,17 +9,43 @@ wss.on("connection", (ws) => {
     ws.send(JSON.stringify({ message: "Connected to WebSocket server" }));
 
     const sendDeviceUpdates = async () => {
-        const devices = getAllDevices();
-        const updatedDevices = await Promise.all(devices.map(async (device) => {
-            device.status = await checkDeviceAvailability(device.ip) ? "Active" : "Offline";
-            updateDeviceStatus(device.ip, device.status);
-            return device;
-        }));
-        ws.send(JSON.stringify({ devices: updatedDevices }));
+        try {
+            const result = await getAllDevices();
+            if (!result.success) {
+                console.error("Failed to get devices:", result.error);
+                return;
+            }
+
+            const devices = result.devices;
+            
+            // Send full list of devices with their current status
+            ws.send(JSON.stringify({ 
+                type: 'deviceUpdate',
+                devices: devices.map(device => ({
+                    id: device.deviceId || device._id,
+                    name: device.name,
+                    ipAddress: device.ipAddress,
+                    ip: device.ipAddress, // For backward compatibility
+                    status: device.status || 'Unknown',
+                    currentFirmware: device.currentFirmware || 'No firmware',
+                    canRevert: device.previousFirmware !== null
+                }))
+            }));
+        } catch (err) {
+            console.error("Error sending device updates:", err);
+        }
     };
 
+    // Send initial device list
+    sendDeviceUpdates();
+
+    // Set up periodic updates
     const interval = setInterval(sendDeviceUpdates, 5000);
-    ws.on("close", () => clearInterval(interval));
+    
+    ws.on("close", () => {
+        console.log("Client disconnected from WebSocket");
+        clearInterval(interval);
+    });
 });
 
 module.exports = wss;

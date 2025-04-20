@@ -1,33 +1,37 @@
-const { getTrafficLogs, addTrafficLog, getTrafficSummary: getTrafficLogsSummary } = require("../models/trafficModel");
+const { addLog, getDeviceLogs, getAllLogs, getTrafficSummary, searchLogs } = require("../models/trafficModel");
 const { getAllRules, getRuleById, createRule, updateRule, deleteRule } = require("../models/alertRulesModel");
-const { getAlerts, updateAlertStatus } = require("../models/alertsModel");
-const { evaluateLogs } = require("../utils/ruleEvaluator");
+const { getAlerts, updateAlertStatus, getAlertStats, generateCSVReport } = require("../models/alertsModel");
+const { processLog, processExistingLogs } = require("../utils/alertEngine");
 const { getAllDevices } = require("../models/deviceModel");
-const fs = require('fs');
-const path = require('path');
-const nodemailer = require('nodemailer');
-const json2csv = require('json2csv').Parser;
 
+// Get traffic logs for a specific device
 const getTrafficLogsForDevice = async (req, res) => {
     try {
         const { ip } = req.params;
         const { since } = req.query;
-        let logs = await getTrafficLogs(ip);
         
-        // If 'since' parameter is provided, filter logs to only include those newer than the timestamp
-        if (since) {
-            const sinceDate = new Date(since);
-            logs = logs.filter(log => new Date(log.timestamp) > sinceDate);
+        // Use the MongoDB model to get logs
+        const result = await getDeviceLogs(ip, since);
+        
+        if (!result.success) {
+            return res.status(500).json({ 
+                success: false, 
+                error: result.error || "Failed to get traffic logs" 
+            });
         }
         
-        // Add device information
-        const devices = getAllDevices();
-        const deviceInfo = devices.find(d => d.ip === ip) || {};
+        // Get device information if available
+        const devicesResult = await getAllDevices();
+        let deviceInfo = {};
+        
+        if (devicesResult.success && devicesResult.devices.length > 0) {
+            deviceInfo = devicesResult.devices.find(d => d.ipAddress === ip) || {};
+        }
         
         res.json({ 
             success: true, 
             ip, 
-            logs,
+            logs: result.logs,
             deviceInfo
         });
     } catch (error) {
@@ -36,376 +40,69 @@ const getTrafficLogsForDevice = async (req, res) => {
     }
 };
 
-const addTrafficLogForDevice = (ip, log) => {
+// Add a new traffic log for a device
+const addTrafficLogForDevice = async (deviceIp, logData) => {
     try {
-        // Save the log first
-        const saved = addTrafficLog(ip, log);
+        // Save the log first using the MongoDB model
+        const result = await addLog(deviceIp, logData);
         
-        if (saved) {
-            // Evaluate this log against rules in real-time
-            const matchedRules = evaluateLogs([log], ip);
+        if (result.success) {
+            // Process the log against alert rules
+            const triggeredAlerts = await processLog(result.log);
             
-            if (matchedRules.length > 0) {
-                console.log(`🚨 Generated ${matchedRules.length} alerts for device ${ip}`);
+            if (triggeredAlerts && triggeredAlerts.length > 0) {
+                console.log(`🚨 Generated ${triggeredAlerts.length} alerts for device ${deviceIp}`);
             }
+            
+            return true;
         }
         
-        return saved;
+        return false;
     } catch (error) {
         console.error("Error adding traffic log:", error);
         return false;
     }
 };
 
-const getTrafficLogsSummaryHandler = (req, res) => {
+// Get a summary of traffic logs
+const getTrafficLogsSummaryHandler = async (req, res) => {
     try {
-        const summary = getTrafficLogsSummary();
-        res.json({ success: true, summary });
-    } catch (error) {
-        res.status(500).json({ success: false, error: "Failed to get traffic summary" });
-    }
-};
-
-const getTrafficAlerts = async (req, res) => {
-    try {
-        const { ip } = req.params;
-        const logs = await getTrafficLogs(ip);
+        // Use the traffic summary function from the MongoDB model
+        const deviceLogs = await getTrafficSummary();
         
-        // Filter and process alerts
-        const alerts = logs
-            .filter(log => {
-                const severity = determineSeverity(log);
-                return severity === 'HIGH' || severity === 'MEDIUM';
-            })
-            .map(log => ({
-                ...log,
-                alertType: determineAlertType(log),
-                severity: determineSeverity(log),
-                recommendation: generateRecommendation(log)
-            }));
-
-        res.json({ success: true, alerts });
-    } catch (error) {
-        console.error("Error getting alerts:", error);
-        res.status(500).json({ success: false, error: "Failed to get alerts" });
-    }
-};
-
-const getDeviceMetrics = async (req, res) => {
-    try {
-        const { ip } = req.params;
-        const logs = await getTrafficLogs(ip);
-        
-        const metrics = {
-            totalTraffic: logs.length,
-            protocols: countProtocols(logs),
-            hourlyActivity: calculateHourlyActivity(logs),
-            topDestinations: getTopDestinations(logs),
-            performanceMetrics: calculatePerformanceMetrics(logs)
-        };
-
-        res.json({ success: true, metrics });
-    } catch (error) {
-        console.error("Error getting device metrics:", error);
-        res.status(500).json({ success: false, error: "Failed to get device metrics" });
-    }
-};
-
-const getUserActivity = async (req, res) => {
-    try {
-        const { ip } = req.params;
-        const logs = await getTrafficLogs(ip);
-        
-        const userActivity = {
-            sessions: extractUserSessions(logs),
-            behaviors: analyzeUserBehavior(logs),
-            anomalies: detectAnomalies(logs)
-        };
-
-        res.json({ success: true, userActivity });
-    } catch (error) {
-        console.error("Error getting user activity:", error);
-        res.status(500).json({ success: false, error: "Failed to get user activity" });
-    }
-};
-
-// Helper functions for SIEM analysis
-/**
- * Determines the severity level of a log entry based on its content
- * HIGH: Contains 'error', 'fail', or 'denied' in the info field
- * MEDIUM: Contains 'warn' or 'retry' in the info field
- * LOW: All other logs (default severity)
- */
-const determineSeverity = (log) => {
-    const info = log.source?.info?.toLowerCase() || '';
-    if (info.includes('error') || info.includes('fail') || info.includes('denied')) return 'HIGH';
-    if (info.includes('warn') || info.includes('retry')) return 'MEDIUM';
-    return 'LOW';
-};
-
-const determineCategory = (log) => {
-    const info = log.source?.info?.toLowerCase() || '';
-    if (info.includes('auth') || info.includes('login')) return 'AUTHENTICATION';
-    if (info.includes('firewall') || info.includes('security')) return 'SECURITY';
-    if (info.includes('ping') || info.includes('tcp')) return 'NETWORK';
-    if (info.includes('device') || info.includes('iot')) return 'IOT';
-    return 'SYSTEM';
-};
-
-const calculateMetrics = (log) => ({
-    timestamp: log.timestamp,
-    bytesTransferred: log.raw?.length || 0,
-    protocol: log.source?.protocol || 'UNKNOWN',
-    responseTime: Math.floor(Math.random() * 100) // Simulated response time
-});
-
-const determineAlertType = (log) => {
-    const info = log.source?.info?.toLowerCase() || '';
-    if (info.includes('brute')) return 'BRUTE_FORCE_ATTEMPT';
-    if (info.includes('denial') || info.includes('dos')) return 'DOS_ATTEMPT';
-    if (info.includes('injection')) return 'INJECTION_ATTEMPT';
-    if (info.includes('unauthorized')) return 'UNAUTHORIZED_ACCESS';
-    return 'SUSPICIOUS_ACTIVITY';
-};
-
-const generateRecommendation = (log) => {
-    const alertType = determineAlertType(log);
-    const recommendations = {
-        BRUTE_FORCE_ATTEMPT: 'Implement rate limiting and account lockout policies',
-        DOS_ATTEMPT: 'Configure DDoS protection and traffic filtering',
-        INJECTION_ATTEMPT: 'Update input validation and sanitization',
-        UNAUTHORIZED_ACCESS: 'Review access controls and authentication mechanisms',
-        SUSPICIOUS_ACTIVITY: 'Monitor and investigate unusual patterns'
-    };
-    return recommendations[alertType] || 'Review security logs and update policies';
-};
-
-const countProtocols = (logs) => {
-    return logs.reduce((acc, log) => {
-        const protocol = log.source?.protocol || 'UNKNOWN';
-        acc[protocol] = (acc[protocol] || 0) + 1;
-        return acc;
-    }, {});
-};
-
-const calculateHourlyActivity = (logs) => {
-    const hourly = new Array(24).fill(0);
-    logs.forEach(log => {
-        const hour = new Date(log.timestamp).getHours();
-        hourly[hour]++;
-    });
-    return hourly;
-};
-
-const getTopDestinations = (logs) => {
-    const destinations = {};
-    logs.forEach(log => {
-        const dst = log.source?.dstIp;
-        if (dst) destinations[dst] = (destinations[dst] || 0) + 1;
-    });
-    return Object.entries(destinations)
-        .sort(([,a], [,b]) => b - a)
-        .slice(0, 10)
-        .reduce((acc, [ip, count]) => ({ ...acc, [ip]: count }), {});
-};
-
-const calculatePerformanceMetrics = (logs) => ({
-    averageResponseTime: Math.floor(Math.random() * 100), // Simulated
-    packetLoss: Math.random() * 0.01, // Simulated
-    bandwidth: Math.floor(Math.random() * 1000) // Simulated
-});
-
-const extractUserSessions = (logs) => {
-    // Simplified session extraction
-    const sessions = new Map();
-    logs.forEach(log => {
-        const srcIp = log.source?.srcIp;
-        if (!srcIp) return;
-        
-        if (!sessions.has(srcIp)) {
-            sessions.set(srcIp, {
-                startTime: log.timestamp,
-                endTime: log.timestamp,
-                eventCount: 1
-            });
-        } else {
-            const session = sessions.get(srcIp);
-            session.endTime = log.timestamp;
-            session.eventCount++;
-        }
-    });
-    return Array.from(sessions.entries()).map(([ip, session]) => ({
-        ip,
-        ...session
-    }));
-};
-
-const analyzeUserBehavior = (logs) => {
-    // Simplified behavior analysis
-    return {
-        normalPatterns: ['Regular heartbeat signals', 'Standard HTTP traffic'],
-        unusualPatterns: []
-    };
-};
-
-const detectAnomalies = (logs) => {
-    // Basic anomaly detection
-    return logs
-        .filter(log => determineSeverity(log) === 'HIGH')
-        .map(log => ({
-            timestamp: log.timestamp,
-            type: determineAlertType(log),
-            description: log.source?.info || 'Unknown anomaly',
-            severity: 'HIGH'
-        }));
-};
-
-const getAllTrafficLogs = async (req, res) => {
-    try {
-        const allLogs = await getTrafficLogsSummary();
-        const logs = [];
-        const devices = {};
-
-        Object.entries(allLogs).forEach(([deviceIp, deviceLogs]) => {
-            if (Array.isArray(deviceLogs) && deviceLogs.length > 0) {
-                // Process each log and add deviceIp
-                const processedLogs = deviceLogs.map(log => ({
-                    ...log,
-                    deviceIp
-                }));
-                
-                logs.push(...processedLogs);
-                
-                // Add device summary
-                devices[deviceIp] = {
-                    totalEvents: deviceLogs.length,
-                    lastActivity: deviceLogs[deviceLogs.length - 1]?.timestamp || null,
-                    status: 'active',
-                    eventSummary: {
-                        high: deviceLogs.filter(log => determineSeverity(log) === 'HIGH').length,
-                        medium: deviceLogs.filter(log => determineSeverity(log) === 'MEDIUM').length,
-                        low: deviceLogs.filter(log => determineSeverity(log) === 'LOW').length
-                    }
-                };
-            }
-        });
-
-        // Sort logs by timestamp, most recent first
-        logs.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-
-        // Apply time range filter if specified
-        const { timeRange } = req.query;
-        let filteredLogs = logs;
-        
-        if (timeRange) {
-            const now = new Date();
-            const timeLimit = new Date(now);
-            
-            switch(timeRange) {
-                case '1h':
-                    timeLimit.setHours(now.getHours() - 1);
-                    break;
-                case '24h':
-                    timeLimit.setDate(now.getDate() - 1);
-                    break;
-                case '7d':
-                    timeLimit.setDate(now.getDate() - 7);
-                    break;
-                case '30d':
-                    timeLimit.setDate(now.getDate() - 30);
-                    break;
-            }
-            
-            filteredLogs = logs.filter(log => new Date(log.timestamp) >= timeLimit);
-        }
-
-        res.json({
-            success: true,
-            logs: filteredLogs,
-            devices,
-            summary: {
-                totalDevices: Object.keys(devices).length,
-                totalEvents: filteredLogs.length,
-                lastUpdate: new Date().toISOString()
-            }
+        res.json({ 
+            success: true, 
+            summary: deviceLogs 
         });
     } catch (error) {
-        console.error("Error getting all traffic logs:", error);
+        console.error("Error getting traffic summary:", error);
         res.status(500).json({ 
             success: false, 
-            error: "Failed to get traffic logs" 
+            error: "Failed to get traffic summary" 
         });
     }
 };
 
-const getNetworkTraffic = async (req, res) => {
-    try {
-        const networkData = {
-            devices: {},
-            summary: {
-                totalEvents: 0,
-                activeDevices: 0,
-                alerts: 0,
-                timestamp: new Date().toISOString()
-            }
-        };
-
-        const logs = await getTrafficLogsSummary();
-        
-        // Process each device's logs
-        Object.entries(logs).forEach(([ip, deviceLogs]) => {
-            if (Array.isArray(deviceLogs) && deviceLogs.length > 0) {
-                networkData.devices[ip] = {
-                    lastSeen: deviceLogs[deviceLogs.length - 1].timestamp,
-                    eventCount: deviceLogs.length,
-                    alerts: deviceLogs.filter(log => determineSeverity(log) === 'HIGH').length,
-                    protocols: countProtocols(deviceLogs),
-                    status: 'active'
-                };
-                
-                networkData.summary.totalEvents += deviceLogs.length;
-                networkData.summary.alerts += networkData.devices[ip].alerts;
-            }
-        });
-        
-        networkData.summary.activeDevices = Object.keys(networkData.devices).length;
-
-        res.json(networkData);
-    } catch (error) {
-        console.error("Error getting network traffic:", error);
-        res.status(500).json({ error: "Failed to get network traffic" });
-    }
-};
-
+// Get all logs without filtering (pagination may be needed for large datasets)
 const getAllLogsWithoutFiltering = async (req, res) => {
     try {
-        const { since } = req.query;
-        const logs = fs.readFileSync(path.join(__dirname, '../data/trafficLogs.json'), 'utf8');
-        const parsedLogs = JSON.parse(logs);
+        const { since, limit } = req.query;
         
-        // Flatten all logs from all IPs into a single array
-        let allLogs = Object.entries(parsedLogs).reduce((acc, [deviceIp, deviceLogs]) => {
-            // Add device IP to each log
-            const logsWithDeviceIp = deviceLogs.map(log => ({
-                ...log,
-                deviceIp
-            }));
-            return [...acc, ...logsWithDeviceIp];
-        }, []);
+        // Get logs from MongoDB using the updated model
+        const result = await getAllLogs(since, limit ? parseInt(limit) : 1000);
         
-        // If 'since' parameter is provided, filter logs to only include those newer than the timestamp
-        if (since) {
-            const sinceDate = new Date(since);
-            allLogs = allLogs.filter(log => new Date(log.timestamp) > sinceDate);
+        if (!result.success) {
+            return res.status(500).json({
+                success: false,
+                error: result.error || "Failed to get logs"
+            });
         }
         
-        // Sort by timestamp, most recent first
-        allLogs.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-
+        // Sort by timestamp, most recent first (should already be sorted by the model)
         res.json({
             success: true,
-            logs: allLogs,
-            totalEvents: allLogs.length,
+            logs: result.logs,
+            totalEvents: result.logs.length,
             lastUpdate: new Date().toISOString()
         });
     } catch (error) {
@@ -417,112 +114,33 @@ const getAllLogsWithoutFiltering = async (req, res) => {
     }
 };
 
-// Alert Rules Management
-const getAllAlertRules = async (req, res) => {
+// Get active alerts
+const getActiveAlerts = async (req, res) => {
     try {
-        const rules = getAllRules();
-        res.json({ success: true, rules });
-    } catch (error) {
-        console.error("Error getting alert rules:", error);
-        res.status(500).json({ success: false, error: "Failed to get alert rules" });
-    }
-};
-
-const getAlertRuleById = async (req, res) => {
-    try {
-        const { id } = req.params;
-        const rule = getRuleById(id);
+        const { ip } = req.params;
         
-        if (rule) {
-            res.json({ success: true, rule });
-        } else {
-            res.status(404).json({ success: false, error: "Rule not found" });
+        // Create filter with deviceIp if provided
+        const filters = {};
+        if (ip && ip !== 'all') {
+            filters.deviceIp = ip;
         }
-    } catch (error) {
-        console.error("Error getting alert rule:", error);
-        res.status(500).json({ success: false, error: "Failed to get alert rule" });
-    }
-};
-
-const createAlertRule = async (req, res) => {
-    try {
-        const result = createRule(req.body);
         
-        if (result.success) {
-            res.status(201).json({ success: true, rule: result.rule });
-        } else {
-            res.status(400).json({ success: false, error: result.error });
-        }
-    } catch (error) {
-        console.error("Error creating alert rule:", error);
-        res.status(500).json({ success: false, error: "Failed to create alert rule" });
-    }
-};
-
-const updateAlertRule = async (req, res) => {
-    try {
-        const { id } = req.params;
-        const result = updateRule(id, req.body);
+        // Only get non-resolved alerts
+        filters.status = { $ne: "RESOLVED" };
         
-        if (result.success) {
-            res.json({ success: true, rule: result.rule });
-        } else {
-            if (result.error === "Rule not found") {
-                res.status(404).json({ success: false, error: result.error });
-            } else {
-                res.status(400).json({ success: false, error: result.error });
-            }
-        }
-    } catch (error) {
-        console.error("Error updating alert rule:", error);
-        res.status(500).json({ success: false, error: "Failed to update alert rule" });
-    }
-};
-
-const deleteAlertRule = async (req, res) => {
-    try {
-        const { id } = req.params;
-        const result = deleteRule(id);
+        // Get alerts from MongoDB
+        const result = await getAlerts(filters);
         
-        if (result.success) {
-            res.json({ success: true });
-        } else {
-            res.status(404).json({ success: false, error: result.error });
-        }
-    } catch (error) {
-        console.error("Error deleting alert rule:", error);
-        res.status(500).json({ success: false, error: "Failed to delete alert rule" });
-    }
-};
-
-// Alerts Management
-const getActiveAlerts = (req, res) => {
-    try {
-        // Get alerts from the alerts model
-        const fs = require('fs');
-        const path = require('path');
-        const alertsPath = path.join(__dirname, '../data/alerts.json');
-        
-        // Ensure the file exists
-        if (!fs.existsSync(alertsPath)) {
-            return res.status(200).json({
-                success: true,
-                alerts: []
+        if (!result.success) {
+            return res.status(500).json({
+                success: false,
+                error: result.error || "Failed to get active alerts"
             });
         }
         
-        // Read alerts from file
-        const alertsData = fs.readFileSync(alertsPath, 'utf8');
-        const alerts = JSON.parse(alertsData || '[]');
-        
-        // Filter active alerts (not resolved)
-        const activeAlerts = Array.isArray(alerts) 
-            ? alerts.filter(alert => alert.status !== 'RESOLVED')
-            : [];
-            
         return res.status(200).json({
             success: true,
-            alerts: activeAlerts
+            alerts: result.alerts
         });
     } catch (error) {
         console.error('Error getting active alerts:', error);
@@ -533,50 +151,41 @@ const getActiveAlerts = (req, res) => {
     }
 };
 
-const getAllSystemAlerts = (req, res) => {
+// Get all system alerts
+const getAllSystemAlerts = async (req, res) => {
     try {
-        // Get alerts from the alerts model
-        const fs = require('fs');
-        const path = require('path');
-        const alertsPath = path.join(__dirname, '../data/alerts.json');
+        const filters = {};
+        const { status, since } = req.query;
         
-        // Ensure the file exists
-        if (!fs.existsSync(alertsPath)) {
-            return res.status(200).json({
-                success: true,
-                alerts: [],
-                alertsByStatus: {
-                    NEW: 0,
-                    ACKNOWLEDGED: 0,
-                    RESOLVED: 0
-                }
+        if (status) {
+            filters.status = status;
+        }
+        
+        if (since) {
+            filters.since = since;
+        }
+        
+        // Get alerts from MongoDB
+        const result = await getAlerts(filters);
+        
+        if (!result.success) {
+            return res.status(500).json({
+                success: false,
+                error: result.error || "Failed to get system alerts"
             });
         }
         
-        // Read alerts from file
-        const alertsData = fs.readFileSync(alertsPath, 'utf8');
-        const alerts = JSON.parse(alertsData || '[]');
-        
-        // Make sure we have an array
-        const alertsArray = Array.isArray(alerts) ? alerts : [];
-        
-        // Count alerts by status
-        const alertsByStatus = {
-            NEW: 0,
-            ACKNOWLEDGED: 0,
-            RESOLVED: 0
-        };
-        
-        alertsArray.forEach(alert => {
-            if (alert.status && alertsByStatus.hasOwnProperty(alert.status)) {
-                alertsByStatus[alert.status]++;
-            }
-        });
+        // Get alert statistics
+        const statsResult = await getAlertStats();
         
         return res.status(200).json({
             success: true,
-            alerts: alertsArray,
-            alertsByStatus
+            alerts: result.alerts,
+            alertsByStatus: statsResult.success ? statsResult.stats.byStatus : {
+                NEW: 0,
+                ACKNOWLEDGED: 0,
+                RESOLVED: 0
+            }
         });
     } catch (error) {
         console.error('Error getting all system alerts:', error);
@@ -587,6 +196,7 @@ const getAllSystemAlerts = (req, res) => {
     }
 };
 
+// Update alert status
 const updateAlertStatusHandler = async (req, res) => {
     try {
         const { id } = req.params;
@@ -599,7 +209,7 @@ const updateAlertStatusHandler = async (req, res) => {
             });
         }
         
-        const result = updateAlertStatus(id, status);
+        const result = await updateAlertStatus(id, status);
         
         if (result.success) {
             res.json({ success: true, alert: result.alert });
@@ -612,31 +222,8 @@ const updateAlertStatusHandler = async (req, res) => {
     }
 };
 
-// Evaluate existing logs against all rules (for testing or after adding new rules)
-const evaluateExistingLogs = async (req, res) => {
-    try {
-        // Use the optimized processAllExistingLogs function from alertEngine
-        const { processAllExistingLogs } = require("../utils/alertEngine");
-        console.log("🚀 Starting evaluation of existing logs against all rules...");
-        
-        // Start the evaluation process (non-blocking)
-        const totalAlerts = await processAllExistingLogs();
-        
-        res.json({ 
-            success: true, 
-            message: `Evaluated logs and generated ${totalAlerts} alerts` 
-        });
-    } catch (error) {
-        console.error("Error evaluating existing logs:", error);
-        res.status(500).json({ 
-            success: false, 
-            error: "Failed to evaluate logs" 
-        });
-    }
-};
-
-// Generate and email CSV report of offenses
-const generateCSVReport = async (req, res) => {
+// Generate CSV report for alerts
+const generateCSVReportHandler = async (req, res) => {
     try {
         const { email } = req.body;
         
@@ -647,118 +234,20 @@ const generateCSVReport = async (req, res) => {
             });
         }
         
-        // Read the alerts from the alerts.json file
-        const fs = require('fs');
-        const path = require('path');
-        const nodemailer = require('nodemailer');
-        const json2csv = require('json2csv').Parser;
+        // Generate and send CSV report using the MongoDB model
+        const result = await generateCSVReport(email);
         
-        const alertsPath = path.join(__dirname, '../data/alerts.json');
-        
-        // Check if the alerts file exists
-        if (!fs.existsSync(alertsPath)) {
-            return res.status(404).json({ 
-                success: false, 
-                error: "No offense data found" 
+        if (result.success) {
+            return res.status(200).json({
+                success: true,
+                message: result.message || `Report successfully generated and sent to ${email}`
+            });
+        } else {
+            return res.status(400).json({
+                success: false,
+                error: result.error || "Failed to generate report"
             });
         }
-        
-        // Read and parse the alerts data
-        const alertsData = fs.readFileSync(alertsPath, 'utf8');
-        const alerts = JSON.parse(alertsData || '[]');
-        
-        if (!Array.isArray(alerts) || alerts.length === 0) {
-            return res.status(404).json({ 
-                success: false, 
-                error: "No offenses found to generate report" 
-            });
-        }
-        
-        // Define CSV fields
-        const fields = [
-            'id',
-            'ruleName',
-            'ruleId',
-            'description',
-            'deviceIp',
-            'severity',
-            'status',
-            'timestamp',
-            'lastUpdated',
-            'matchCount'
-        ];
-        
-        // Convert to CSV
-        const json2csvParser = new json2csv({ fields });
-        const csv = json2csvParser.parse(alerts);
-        
-        // Create temp directory if it doesn't exist
-        const tempDir = path.join(__dirname, '../temp');
-        if (!fs.existsSync(tempDir)) {
-            fs.mkdirSync(tempDir, { recursive: true });
-        }
-        
-        // Create a temp file for the CSV
-        const tempFilePath = path.join(tempDir, `offense-report-${Date.now()}.csv`);
-        fs.writeFileSync(tempFilePath, csv);
-        
-        // Set up the email transporter
-        const transporter = nodemailer.createTransport({
-            host: process.env.SMTP_HOST,
-            port: process.env.SMTP_PORT,
-            secure: process.env.SMTP_SECURE === 'true',
-            auth: {
-                user: process.env.SMTP_USER,
-                pass: process.env.SMTP_PASS
-            }
-        });
-        
-        // Count alerts by status
-        const statusCounts = {
-            NEW: alerts.filter(a => a.status === 'NEW').length,
-            ACKNOWLEDGED: alerts.filter(a => a.status === 'ACKNOWLEDGED').length,
-            RESOLVED: alerts.filter(a => a.status === 'RESOLVED').length
-        };
-        
-        // Set up the email content
-        const mailOptions = {
-            from: process.env.EMAIL_FROM,
-            to: email,
-            subject: 'Security Offense Report - CybIOT Dashboard',
-            html: `
-                <h2>CybIOT Security Offense Report</h2>
-                <p>Please find attached a comprehensive report of all security offenses.</p>
-                
-                <h3>Summary:</h3>
-                <ul>
-                    <li>Total offenses: ${alerts.length}</li>
-                    <li>New: ${statusCounts.NEW}</li>
-                    <li>Acknowledged: ${statusCounts.ACKNOWLEDGED}</li>
-                    <li>Resolved: ${statusCounts.RESOLVED}</li>
-                </ul>
-                
-                <p>This report was generated on ${new Date().toLocaleString()} and includes all offense data stored in the system.</p>
-                
-                <p>This is an automated message from the CybIOT Security System.</p>
-            `,
-            attachments: [
-                {
-                    filename: 'security-offense-report.csv',
-                    path: tempFilePath
-                }
-            ]
-        };
-        
-        // Send the email
-        await transporter.sendMail(mailOptions);
-        
-        // Delete the temp file
-        fs.unlinkSync(tempFilePath);
-        
-        return res.status(200).json({
-            success: true,
-            message: `Report successfully generated and sent to ${email}`
-        });
     } catch (error) {
         console.error('Error generating CSV report:', error);
         return res.status(500).json({
@@ -768,27 +257,338 @@ const generateCSVReport = async (req, res) => {
     }
 };
 
+// Get all traffic logs
+const getAllTrafficLogs = async (req, res) => {
+    try {
+        const { timeRange } = req.query;
+        
+        // Calculate 'since' based on timeRange
+        let since = null;
+        if (timeRange) {
+            const now = new Date();
+            if (timeRange === '1h') {
+                since = new Date(now - 60 * 60 * 1000);
+            } else if (timeRange === '24h') {
+                since = new Date(now - 24 * 60 * 60 * 1000);
+            } else if (timeRange === '7d') {
+                since = new Date(now - 7 * 24 * 60 * 60 * 1000);
+            } else if (timeRange === '30d') {
+                since = new Date(now - 30 * 24 * 60 * 60 * 1000);
+            }
+        }
+        
+        // Get logs from MongoDB
+        const result = await getAllLogs(since ? since.toISOString() : null);
+        
+        if (!result.success) {
+            return res.status(500).json({ 
+                success: false, 
+                error: result.error || "Failed to get traffic logs" 
+            });
+        }
+        
+        res.json({ 
+            success: true, 
+            logs: result.logs
+        });
+    } catch (error) {
+        console.error("Error getting all traffic logs:", error);
+        res.status(500).json({ success: false, error: "Failed to get traffic logs" });
+    }
+};
+
+// Get network traffic data
+const getNetworkTraffic = async (req, res) => {
+    try {
+        // Get traffic logs summary
+        const deviceLogs = await getTrafficSummary();
+        
+        // Get all devices for correlation
+        const devicesResult = await getAllDevices();
+        
+        if (!devicesResult.success) {
+            return res.status(500).json({ 
+                success: false, 
+                error: "Failed to get device information" 
+            });
+        }
+        
+        // Calculate network traffic metrics
+        const metrics = {
+            totalTraffic: 0,
+            deviceBreakdown: {},
+            trafficOverTime: []
+        };
+        
+        // Process device logs to build metrics
+        Object.keys(deviceLogs).forEach(deviceIp => {
+            const logs = deviceLogs[deviceIp];
+            metrics.totalTraffic += logs.length;
+            
+            const device = devicesResult.devices.find(d => d.ipAddress === deviceIp);
+            const deviceName = device ? device.name : deviceIp;
+            
+            metrics.deviceBreakdown[deviceName] = logs.length;
+        });
+        
+        res.json({ 
+            success: true, 
+            metrics
+        });
+    } catch (error) {
+        console.error("Error getting network traffic:", error);
+        res.status(500).json({ success: false, error: "Failed to get network traffic" });
+    }
+};
+
+// Get traffic alerts for device
+const getTrafficAlerts = async (req, res) => {
+    try {
+        const { ip } = req.params;
+        
+        // Get alerts filtered by device IP
+        const filters = {};
+        if (ip && ip !== 'all') {
+            filters.deviceIp = ip;
+        }
+        
+        const result = await getAlerts(filters);
+        
+        if (!result.success) {
+            return res.status(500).json({ 
+                success: false, 
+                error: result.error || "Failed to get traffic alerts" 
+            });
+        }
+        
+        res.json({ success: true, alerts: result.alerts });
+    } catch (error) {
+        console.error("Error getting traffic alerts:", error);
+        res.status(500).json({ success: false, error: "Failed to get traffic alerts" });
+    }
+};
+
+// Get device metrics
+const getDeviceMetrics = async (req, res) => {
+    try {
+        const { ip } = req.params;
+        
+        // Get device logs
+        const result = await getDeviceLogs(ip);
+        
+        if (!result.success) {
+            return res.status(500).json({ 
+                success: false, 
+                error: result.error || "Failed to get device metrics" 
+            });
+        }
+        
+        // Calculate metrics from logs
+        const logs = result.logs;
+        const metrics = {
+            totalEvents: logs.length,
+            protocolBreakdown: {},
+            severityBreakdown: {},
+            activityOverTime: []
+        };
+        
+        // Process logs to build metrics
+        logs.forEach(log => {
+            // Protocol breakdown
+            const protocol = log.source?.protocol || 'Unknown';
+            metrics.protocolBreakdown[protocol] = (metrics.protocolBreakdown[protocol] || 0) + 1;
+            
+            // Severity breakdown
+            const info = (log.source?.info || '').toLowerCase();
+            let severity = 'LOW';
+            if (info.includes('error') || info.includes('fail') || info.includes('denied')) {
+                severity = 'HIGH';
+            } else if (info.includes('warn') || info.includes('retry')) {
+                severity = 'MEDIUM';
+            }
+            metrics.severityBreakdown[severity] = (metrics.severityBreakdown[severity] || 0) + 1;
+        });
+        
+        res.json({ success: true, metrics });
+    } catch (error) {
+        console.error("Error getting device metrics:", error);
+        res.status(500).json({ success: false, error: "Failed to get device metrics" });
+    }
+};
+
+// Get user activity
+const getUserActivity = async (req, res) => {
+    try {
+        const { ip } = req.params;
+        
+        // Get device logs
+        const result = await getDeviceLogs(ip);
+        
+        if (!result.success) {
+            return res.status(500).json({ 
+                success: false, 
+                error: result.error || "Failed to get user activity" 
+            });
+        }
+        
+        // Filter logs for user activity
+        const userLogs = result.logs.filter(log => {
+            const info = (log.source?.info || '').toLowerCase();
+            return info.includes('user') || info.includes('login') || info.includes('auth');
+        });
+        
+        res.json({ success: true, activity: userLogs });
+    } catch (error) {
+        console.error("Error getting user activity:", error);
+        res.status(500).json({ success: false, error: "Failed to get user activity" });
+    }
+};
+
+// Alert rule related functions
+const getAllAlertRules = async (req, res) => {
+    try {
+        const result = await getAllRules();
+        
+        if (!result.success) {
+            return res.status(500).json({
+                success: false, 
+                error: result.error || "Failed to get alert rules"
+            });
+        }
+        
+        res.json({ success: true, rules: result.rules });
+    } catch (error) {
+        console.error("Error getting alert rules:", error);
+        res.status(500).json({ success: false, error: "Failed to get alert rules" });
+    }
+};
+
+const getAlertRuleById = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const result = await getRuleById(id);
+        
+        if (!result.success) {
+            return res.status(404).json({
+                success: false,
+                error: result.error || "Alert rule not found"
+            });
+        }
+        
+        res.json({ success: true, rule: result.rule });
+    } catch (error) {
+        console.error(`Error getting alert rule ${req.params.id}:`, error);
+        res.status(500).json({ success: false, error: "Failed to get alert rule" });
+    }
+};
+
+const createAlertRule = async (req, res) => {
+    try {
+        const result = await createRule(req.body);
+        
+        if (!result.success) {
+            return res.status(400).json({
+                success: false,
+                error: result.error || "Failed to create alert rule"
+            });
+        }
+        
+        res.status(201).json({ success: true, rule: result.rule });
+    } catch (error) {
+        console.error("Error creating alert rule:", error);
+        res.status(500).json({ success: false, error: "Failed to create alert rule" });
+    }
+};
+
+const updateAlertRule = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const result = await updateRule(id, req.body);
+        
+        if (!result.success) {
+            return res.status(404).json({
+                success: false,
+                error: result.error || "Alert rule not found"
+            });
+        }
+        
+        res.json({ success: true, rule: result.rule });
+    } catch (error) {
+        console.error(`Error updating alert rule ${req.params.id}:`, error);
+        res.status(500).json({ success: false, error: "Failed to update alert rule" });
+    }
+};
+
+const deleteAlertRule = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const result = await deleteRule(id);
+        
+        if (!result.success) {
+            return res.status(404).json({
+                success: false,
+                error: result.error || "Alert rule not found"
+            });
+        }
+        
+        res.json({ success: true });
+    } catch (error) {
+        console.error(`Error deleting alert rule ${req.params.id}:`, error);
+        res.status(500).json({ success: false, error: "Failed to delete alert rule" });
+    }
+};
+
+const evaluateExistingLogs = async (req, res) => {
+    try {
+        // Get active rules
+        const rulesResult = await getAllRules();
+        
+        if (!rulesResult.success) {
+            return res.status(500).json({
+                success: false,
+                error: "Failed to get alert rules"
+            });
+        }
+        
+        const activeRules = rulesResult.rules.filter(rule => rule.enabled);
+        let totalAlerts = 0;
+        
+        // Process each active rule against existing logs
+        for (const rule of activeRules) {
+            const alertsTriggered = await processExistingLogs(rule);
+            totalAlerts += alertsTriggered.length;
+        }
+        
+        res.json({
+            success: true,
+            message: `Evaluated existing logs against ${activeRules.length} rules`,
+            alertsGenerated: totalAlerts
+        });
+    } catch (error) {
+        console.error("Error evaluating existing logs:", error);
+        res.status(500).json({ success: false, error: "Failed to evaluate logs" });
+    }
+};
+
+// Only keeping necessary exports for this update
 module.exports = {
     getTrafficLogsForDevice,
-    getAllTrafficLogs,
     addTrafficLogForDevice,
     getTrafficLogsSummaryHandler,
+    getAllLogsWithoutFiltering,
+    getActiveAlerts,
+    getAllSystemAlerts,
+    updateAlertStatusHandler,
+    generateCSVReportHandler,
+    getAllTrafficLogs,
+    getNetworkTraffic,
     getTrafficAlerts,
     getDeviceMetrics,
     getUserActivity,
-    getNetworkTraffic,
-    getAllLogsWithoutFiltering,
-    // New functions for alert rules
     getAllAlertRules,
     getAlertRuleById,
     createAlertRule,
     updateAlertRule,
     deleteAlertRule,
-    // New functions for alerts management
-    getActiveAlerts,
-    getAllSystemAlerts,
-    updateAlertStatusHandler,
-    evaluateExistingLogs,
-    // CSV report generation
-    generateCSVReport
+    evaluateExistingLogs
 };
