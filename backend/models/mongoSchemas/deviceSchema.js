@@ -17,14 +17,23 @@ const deviceSchema = new mongoose.Schema({
     required: true,
     trim: true
   },
+  // Alias for backward compatibility
+  ip: {
+    type: String,
+    get: function() { return this.ipAddress; }
+  },
   status: {
     type: String,
-    enum: ['Online', 'Offline', 'Unknown', 'online', 'offline', 'unknown'],
-    default: 'Unknown'
+    enum: ['online', 'offline', 'unknown'],
+    default: 'offline',
+    set: function(val) {
+      // Normalize status to lowercase
+      return val ? val.toLowerCase() : 'unknown';
+    }
   },
   lastSeen: {
     type: Date,
-    default: Date.now
+    default: null
   },
   deviceType: {
     type: String,
@@ -43,6 +52,20 @@ const deviceSchema = new mongoose.Schema({
   }
 }, {
   timestamps: true
+});
+
+// Virtual property to check if device is online
+deviceSchema.virtual('isOnline').get(function() {
+  return this.status.toLowerCase() === 'online';
+});
+
+// Convert ipAddress to ip for backwards compatibility
+deviceSchema.set('toJSON', {
+  virtuals: true,
+  transform: function(doc, ret) {
+    ret.ip = ret.ipAddress;
+    return ret;
+  }
 });
 
 // Create an index on ipAddress for faster lookups

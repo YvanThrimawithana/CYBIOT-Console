@@ -168,7 +168,9 @@ const DeviceList = ({
                                                         : 'bg-yellow-100 text-yellow-800'
                                             }`}
                                         >
-                                            {device.status || 'Unknown'}
+                                            {device.status ? 
+                                                device.status.charAt(0).toUpperCase() + device.status.slice(1).toLowerCase() 
+                                                : 'Unknown'}
                                         </span>
                                     </td>
                                     <td className="p-4 text-right space-x-2">

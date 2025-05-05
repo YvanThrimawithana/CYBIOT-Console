@@ -19,3 +19,51 @@ body {
   background: var(--background);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* Custom table styles for dark theme */
+.custom-table .ant-table {
+  background-color: transparent;
+  color: #fff;
+}
+
+.custom-table .ant-table-thead > tr > th {
+  background-color: #1f2937 !important;
+  color: #9ca3af !important;
+  border-bottom: 1px solid #374151 !important;
+}
+
+.custom-table .ant-table-tbody > tr > td {
+  background-color: transparent !important;
+  border-bottom: 1px solid #374151 !important;
+}
+
+.custom-table .ant-table-tbody > tr:hover > td {
+  background-color: #1f2937 !important;
+}
+
+.custom-table .ant-pagination {
+  color: #fff;
+}
+
+.custom-table .ant-pagination-item a {
+  color: #fff !important;
+}
+
+.custom-table .ant-pagination-item-active {
+  background-color: #2563eb !important;
+  border-color: #2563eb !important;
+}
+
+.custom-table .ant-select-selector {
+  background-color: #1f2937 !important;
+  border-color: #374151 !important;
+  color: #fff !important;
+}
+
+.custom-table .ant-select-arrow {
+  color: #9ca3af !important;
+}
+
+.custom-table .ant-empty-description {
+  color: #9ca3af !important;
+}

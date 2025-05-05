@@ -145,25 +145,45 @@ const deleteDevice = async (deviceId) => {
 // Update device status
 const updateDeviceStatus = async (deviceIp, status) => {
   try {
-    // Look up device by IP address instead of deviceId
+    // Normalize status to lowercase for consistency
+    const normalizedStatus = status.toLowerCase();
+    
+    console.log(`📝 Attempting to update device status for ${deviceIp} to ${normalizedStatus}`);
+    
+    // Look up device by IP address
     const device = await Device.findOneAndUpdate(
       { ipAddress: deviceIp },
       { 
-        status,
+        status: normalizedStatus,
         lastSeen: new Date()
       },
       { new: true }
     );
     
     if (!device) {
-      console.log(`No device found with IP: ${deviceIp}`);
-      return { success: false, error: 'Device not found' };
+      // Try with 'ip' field as fallback (for backward compatibility)
+      const deviceByIp = await Device.findOneAndUpdate(
+        { ip: deviceIp },
+        { 
+          status: normalizedStatus,
+          lastSeen: new Date()
+        },
+        { new: true }
+      );
+      
+      if (!deviceByIp) {
+        console.log(`⚠️ No device found with IP: ${deviceIp}`);
+        return { success: false, error: 'Device not found' };
+      }
+      
+      console.log(`✅ Updated status for ${deviceByIp.name} (${deviceIp}) to ${normalizedStatus}`);
+      return { success: true, device: deviceByIp };
     }
     
-    console.log(`✅ Updated status for ${device.name} (${deviceIp}) to ${status}`);
+    console.log(`✅ Updated status for ${device.name} (${deviceIp}) to ${normalizedStatus}`);
     return { success: true, device };
   } catch (error) {
-    console.error(`Error updating device status for IP ${deviceIp}:`, error);
+    console.error(`❌ Error updating device status for IP ${deviceIp}:`, error);
     return { success: false, error: error.message };
   }
 };

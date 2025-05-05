@@ -16,6 +16,7 @@ import {
 import { RiShieldFill } from "react-icons/ri";
 import { getAllSystemAlerts } from "../services/trafficService";
 import NotificationSettings from "./NotificationSettings";
+import { ScanOutlined } from '@ant-design/icons';
 
 const Navbar = () => {
     const location = useLocation();
@@ -72,7 +73,8 @@ const Navbar = () => {
                 }
             ]
         },
-        { path: '/firmware-management', label: 'Firmware', icon: <MdSystemUpdate size={20} /> }
+        { path: '/firmware-management', label: 'Firmware', icon: <MdSystemUpdate size={20} /> },
+        { path: '/network-scan', label: 'Network Scan', icon: <ScanOutlined /> }
     ];
 
     const handleLogout = () => {

@@ -1,14 +1,80 @@
 const { getAllDevices, saveDevice, updateDeviceStatus, deleteDeviceFromStorage } = require("../models/deviceModel");
-const mqtt = require("mqtt");
 
-const mqttClient = mqtt.connect("mqtt://192.168.1.7:1883");
-const mqttTopic = "cybiot/device/heartbeat";
-
-const lastHeartbeats = {}; // Track heartbeat timestamp by IP address
+// Track heartbeat timestamp by IP address
+const lastHeartbeats = {}; 
 
 // Set interval to check for offline devices every 30 seconds
 const CHECK_INTERVAL = 30000; // 30 seconds
-const TIMEOUT_LIMIT  = 20000; // 1 minute timeout
+const TIMEOUT_LIMIT  = 60000; // 1 minute timeout
+
+// Import mqtt client only if not using MQTTHandler
+let mqttClient = null;
+
+// Use the global mqttHandler if available, otherwise set up direct MQTT connection
+if (!global.mqttHandler) {
+    console.log("⚠️ No global MQTT Handler found, setting up direct MQTT connection");
+    const mqtt = require("mqtt");
+    mqttClient = mqtt.connect("mqtt://192.168.1.7:1883");
+    const mqttTopic = "cybiot/device/heartbeat";
+    
+    // MQTT connection and message handling
+    mqttClient.on("connect", () => {
+        console.log("✅ Connected to MQTT Broker!");
+        mqttClient.subscribe(mqttTopic, (err) => {
+            if (err) {
+                console.log("❌ Failed to subscribe:", err);
+            } else {
+                console.log(`📡 Subscribed to topic: ${mqttTopic}`);
+            }
+        });
+    });
+    
+    mqttClient.on("message", (topic, message) => {
+        if (topic === mqttTopic) {
+            try {
+                const deviceData = JSON.parse(message.toString());
+                const { ip, status } = deviceData;
+    
+                if (!ip) {
+                    console.log("⚠️ Invalid data received (no IP):", deviceData);
+                    return;
+                }
+    
+                // Always force status to "online" when heartbeat is received
+                const normalizedStatus = "online";
+                
+                // Update heartbeat timestamp based on IP address
+                lastHeartbeats[ip] = Date.now();
+                console.log(`🟢 Heartbeat received for ${ip}: Setting status to ${normalizedStatus}`);
+                
+                // Explicitly update status to online on every heartbeat
+                updateDeviceStatus(ip, normalizedStatus)
+                    .then(result => {
+                        if (!result.success) {
+                            console.log(`❌ Failed to update status for ${ip}: ${result.error}`);
+                        } else {
+                            console.log(`✅ Status updated for ${ip} to ${normalizedStatus}`);
+                        }
+                    })
+                    .catch(error => {
+                        console.error(`Error updating device status: ${error.message}`);
+                    });
+            } catch (error) {
+                console.error("❌ Error parsing MQTT message:", error);
+            }
+        }
+    });
+} else {
+    console.log("✅ Using global MQTT Handler for device status updates");
+    
+    // Copy heartbeats from MQTTHandler if available
+    if (global.mqttHandler.lastHeartbeats) {
+        console.log("📋 Syncing heartbeat data from global MQTT Handler");
+        global.mqttHandler.lastHeartbeats.forEach((timestamp, ip) => {
+            lastHeartbeats[ip] = timestamp;
+        });
+    }
+}
 
 // Periodic check for offline devices
 setInterval(async () => {
@@ -32,67 +98,43 @@ setInterval(async () => {
     }
 
     devices.forEach(device => {
-        const lastHeartbeat = lastHeartbeats[device.ipAddress]; // Use ipAddress instead of ip
+        const deviceIp = device.ipAddress || device.ip;
+        
+        if (!deviceIp) {
+            console.log(`⚠️ Device ${device.name} has no IP address`);
+            return;
+        }
+        
+        // Also check global MQTT handler's heartbeats if available
+        let lastHeartbeat = lastHeartbeats[deviceIp];
+        
+        if (!lastHeartbeat && global.mqttHandler && global.mqttHandler.lastHeartbeats) {
+            lastHeartbeat = global.mqttHandler.lastHeartbeats.get(deviceIp);
+            
+            if (lastHeartbeat) {
+                // Sync it back to our local tracker
+                console.log(`📡 Found heartbeat for ${deviceIp} in global MQTT handler`);
+                lastHeartbeats[deviceIp] = lastHeartbeat;
+            }
+        }
 
         if (!lastHeartbeat) {
-            console.log(`⚠️ No heartbeat received for ${device.name} (${device.ipAddress}) yet.`);
+            console.log(`⚠️ No heartbeat received for ${device.name} (${deviceIp}) yet.`);
             return;
         }
 
         if (currentTime - lastHeartbeat > TIMEOUT_LIMIT) {
-            console.log(`🚨 Device ${device.name} (${device.ipAddress}) is now Offline!`);
-            updateDeviceStatus(device.ipAddress, "Offline");
-            delete lastHeartbeats[device.ipAddress]; // Remove from tracking
+            console.log(`🚨 Device ${device.name} (${deviceIp}) is now Offline!`);
+            updateDeviceStatus(deviceIp, "offline");
+            delete lastHeartbeats[deviceIp]; // Remove from tracking
+            
+            // Also remove from global MQTT handler if available
+            if (global.mqttHandler && global.mqttHandler.lastHeartbeats) {
+                global.mqttHandler.lastHeartbeats.delete(deviceIp);
+            }
         }
     });
 }, CHECK_INTERVAL);
-
-// MQTT connection and message handling
-mqttClient.on("connect", () => {
-    console.log("✅ Connected to MQTT Broker!");
-    mqttClient.subscribe(mqttTopic, (err) => {
-        if (err) {
-            console.log("❌ Failed to subscribe:", err);
-        } else {
-            console.log(`📡 Subscribed to topic: ${mqttTopic}`);
-        }
-    });
-});
-
-mqttClient.on("message", (topic, message) => {
-    if (topic === mqttTopic) {
-        try {
-            const deviceData = JSON.parse(message.toString());
-            const { ip, status } = deviceData;
-
-            if (!ip) {
-                console.log("⚠️ Invalid data received (no IP):", deviceData);
-                return;
-            }
-
-            // Normalize status value
-            let normalizedStatus = status || "Online";
-            
-            // Convert any variations to standard format
-            if (normalizedStatus.toLowerCase() === "online" || 
-                normalizedStatus.toLowerCase() === "active") {
-                normalizedStatus = "Online";
-            } else if (normalizedStatus.toLowerCase() === "offline" || 
-                       normalizedStatus.toLowerCase() === "inactive") {
-                normalizedStatus = "Offline";
-            }
-
-            // Update heartbeat timestamp based on IP address
-            lastHeartbeats[ip] = Date.now();
-            console.log(`🟡 Heartbeat received for ${ip}: ${normalizedStatus}`);
-
-            updateDeviceStatus(ip, normalizedStatus);
-
-        } catch (error) {
-            console.error("❌ Error parsing MQTT message:", error);
-        }
-    }
-});
 
 const addDevice = async (req, res) => {
     const { name, ipAddress, ip } = req.body;
@@ -105,7 +147,7 @@ const addDevice = async (req, res) => {
     const result = await saveDevice({ 
         name, 
         ipAddress: deviceIp, // Always store as ipAddress in the database
-        status: "Unknown" 
+        status: "offline" // Default to offline until first heartbeat
     });
     
     if (result.success) {

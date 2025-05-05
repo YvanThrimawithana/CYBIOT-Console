@@ -9,11 +9,20 @@ const deviceRoutes = require("./routes/deviceRoutes");
 const trafficLogRoutes = require("./routes/trafficRoutes");
 const firmwareRoute = require("./routes/firmwareRoute");
 const alertRoutes = require("./routes/alertRoutes"); // Import alert routes
+const networkScanRoutes = require("./routes/networkScanRoutes"); // Add network scan routes
 const { startTrafficMonitoring } = require("./utils/trafficMonitor"); // Import traffic monitoring
 const fs = require('fs');
 const path = require('path');
 const userModel = require('./models/userModel');
 const User = require('./models/mongoSchemas/userSchema');
+
+// Initialize MQTT Handler and export it for other modules to use
+const MQTTHandler = require('./mqtt/mqttHandler');
+const mqttHandler = new MQTTHandler();
+global.mqttHandler = mqttHandler;
+
+// Log successful MQTT initialization
+console.log('🚀 MQTT Handler initialized and connected to broker');
 
 // Connect to MongoDB and verify setup
 connectDB().then(async () => {
@@ -100,6 +109,7 @@ app.use("/api/devices", deviceRoutes);
 app.use("/api/traffic", trafficLogRoutes);
 app.use("/api/firmware", firmwareRoute);
 app.use("/api/alerts", alertRoutes); // Register alert routes
+app.use("/api/network-scan", networkScanRoutes); // Register network scan routes
 
 // Check if SMTP credentials are configured
 if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {

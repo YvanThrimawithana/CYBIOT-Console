@@ -6,6 +6,7 @@ import { MdDevices, MdWifiTethering, MdPowerOff } from "react-icons/md";
 import { getDevices } from "../services/deviceService";
 import { theme } from "../styles/theme";
 import { LineChart } from "../components/Charts";
+import NetworkMap from "../components/NetworkMap";
 
 const Dashboard = () => {
     const [devices, setDevices] = useState([]);
@@ -75,9 +76,11 @@ const Dashboard = () => {
                 <div className="bg-background-surface p-6 rounded-lg shadow-lg"
                     style={{ background: theme.colors.background.surface }}>
                     <h2 className="text-xl font-semibold mb-4" style={{ color: theme.colors.text.primary }}>
-                        Device Status
+                        Device Network Map
                     </h2>
-                    {/* Add device status chart here */}
+                    <div className="h-64">
+                        <NetworkMap devices={devices} />
+                    </div>
                 </div>
             </div>
 

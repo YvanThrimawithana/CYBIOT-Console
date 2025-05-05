@@ -1,17 +1,36 @@
 const mqtt = require('mqtt');
 const fs = require('fs');
 const path = require('path');
+const { updateDeviceStatus } = require('../models/deviceModel');
 
 class MQTTHandler {
     constructor() {
-        this.client = mqtt.connect('mqtt://broker.hivemq.com');
+        // Use your local broker instead of hivemq
+        this.client = mqtt.connect('mqtt://localhost:1883');
         this.devicesFilePath = path.join(__dirname, 'devices.json');
         this.lastHeartbeats = new Map();
-        this.heartbeatThreshold = 30000; // 30 seconds
+        this.heartbeatThreshold = 15000; // 15 seconds
+        this.topicToSubscribe = 'cybiot/device/heartbeat'; // Your heartbeat topic
 
         this.client.on('connect', () => {
-            console.log('Connected to MQTT broker');
-            this.client.subscribe('#');
+            console.log('✅ Connected to MQTT broker at 192.168.1.7:1883');
+            
+            // Subscribe to specific topic rather than wildcard
+            this.client.subscribe(this.topicToSubscribe, (err) => {
+                if (err) {
+                    console.log("❌ Failed to subscribe:", err);
+                } else {
+                    console.log(`📡 Subscribed to topic: ${this.topicToSubscribe}`);
+                }
+            });
+        });
+
+        this.client.on('error', (error) => {
+            console.error('❌ MQTT connection error:', error);
+        });
+
+        this.client.on('disconnect', () => {
+            console.log('⚠️ Disconnected from MQTT broker');
         });
 
         this.client.on('message', (topic, message) => {
@@ -22,6 +41,7 @@ class MQTTHandler {
     }
 
     loadDevices() {
+        // Continue with existing code
         if (fs.existsSync(this.devicesFilePath)) {
             const data = fs.readFileSync(this.devicesFilePath);
             return JSON.parse(data);
@@ -51,18 +71,48 @@ class MQTTHandler {
     }
 
     handleMessage(topic, message) {
-        if (topic.endsWith('/heartbeat')) {
-            const deviceId = topic.split('/')[1];
-            this.handleHeartbeat(deviceId);
-            return; // Don't log heartbeats
-        }
+        console.log(`📨 Received message on topic ${topic}: ${message.toString()}`);
+        
+        if (topic === this.topicToSubscribe) {
+            try {
+                const deviceData = JSON.parse(message.toString());
+                const { ip, status } = deviceData;
 
-        // Log only non-heartbeat messages
-        this.logNetworkTraffic({
-            timestamp: new Date().toISOString(),
-            topic,
-            message: message.toString()
-        });
+                if (!ip) {
+                    console.log("⚠️ Invalid heartbeat data received (no IP):", deviceData);
+                    return;
+                }
+
+                // Always force status to "online" when heartbeat is received
+                const normalizedStatus = "online";
+                
+                // Update heartbeat timestamp based on IP address
+                this.lastHeartbeats.set(ip, Date.now());
+                console.log(`🟢 Heartbeat received for ${ip}: Setting status to ${normalizedStatus}`);
+                
+                // Update device status in MongoDB
+                updateDeviceStatus(ip, normalizedStatus)
+                    .then(result => {
+                        if (!result || !result.success) {
+                            console.log(`❌ Failed to update status for ${ip}: ${result?.error || 'Unknown error'}`);
+                        } else {
+                            console.log(`✅ Status updated for ${ip} to ${normalizedStatus}`);
+                        }
+                    })
+                    .catch(error => {
+                        console.error(`Error updating device status: ${error.message}`);
+                    });
+            } catch (error) {
+                console.error("❌ Error processing MQTT message:", error);
+            }
+        } else {
+            // Log other messages
+            this.logNetworkTraffic({
+                timestamp: new Date().toISOString(),
+                topic,
+                message: message.toString()
+            });
+        }
     }
 
     logNetworkTraffic(log) {
@@ -72,24 +122,14 @@ class MQTTHandler {
     }
 
     checkDevicesStatus() {
-        const devices = this.loadDevices();
-        const now = Date.now();
-
-        devices.forEach(device => {
-            const lastBeat = device.lastHeartbeat;
-            if (lastBeat && (now - lastBeat) > device.heartbeatInterval * 2) {
-                device.status = 'Offline';
-                device.connectionDetails.disconnectionReason = 'Heartbeat timeout';
-                device.connectionDetails.reconnectAttempts += 1;
-            }
-        });
-
-        this.saveDevices(devices);
+        // Use MongoDB device checking instead
+        // The deviceController.js already handles this via interval
+        console.log('🔍 MQTT handler checking device statuses...');
     }
 
-    // Start status checker
     startStatusChecker() {
-        setInterval(() => this.checkDevicesStatus(), 15000); // Check every 15 seconds
+        // Use a shorter interval for more frequent checks
+        setInterval(() => this.checkDevicesStatus(), 15000);
     }
 }
 
