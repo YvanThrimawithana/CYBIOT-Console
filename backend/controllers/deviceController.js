@@ -82,11 +82,15 @@ if (!global.mqttHandler) {
                 
                 // Use deviceId as the primary identifier if available, otherwise use IP
                 const primaryIdentifier = deviceId || ip;
-                
-                updateDeviceStatus(primaryIdentifier, updateData)
+                  updateDeviceStatus(primaryIdentifier, updateData)
                     .then(result => {
                         if (!result.success) {
-                            console.log(`❌ Failed to update status for ${primaryIdentifier}: ${result.error}`);
+                            // Check if this is an unregistered device
+                            if (result.unregisteredDevice) {
+                                console.log(`✅ Device ${deviceId || ip} added to unregistered devices`);
+                            } else {
+                                console.log(`❌ Failed to update status for ${primaryIdentifier}: ${result.error}`);
+                            }
                         } else {
                             console.log(`✅ Status updated for ${ip} to ${normalizedStatus}`);
                         }

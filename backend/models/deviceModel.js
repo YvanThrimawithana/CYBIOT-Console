@@ -253,26 +253,34 @@ const updateDeviceStatus = async (identifier, statusData) => {
         console.log('Error converting to ObjectId:', err);
       }
     }
-    
-    if (!device) {
-      // If this has a device_id from heartbeat, auto-register it
+      if (!device) {
+      // If this has a device_id from heartbeat, add to unregistered devices
       if (deviceId && ipAddress) {
-        console.log(`🆕 Auto-registering new device with ID ${deviceId} and IP ${ipAddress}`);
+        console.log(`🆕 New device detected with ID ${deviceId} and IP ${ipAddress}, adding to unregistered devices`);
         
-        // Create a new device with basic information from heartbeat
-        const newDevice = new Device({
-          deviceId: deviceId,
-          ipAddress: ipAddress,
-          name: `Device_${deviceId.substring(0, 8)}`,  // Create a default name using first 8 chars of ID
-          status: normalizedStatus,
-          createdAt: Date.now(),
-          lastSeen: new Date(),
-          firmwareVersion: firmwareVersion || "Unknown"
-        });
+        // Import UnregisteredDeviceModel
+        const UnregisteredDeviceModel = require('./unregisteredDeviceModel');
         
-        await newDevice.save();
-        console.log(`✅ Created and registered new device ${newDevice.name} with ID ${deviceId}`);
-        return { success: true, device: newDevice, wasCreated: true };
+        // Add to unregistered devices collection
+        try {
+          const unregisteredResult = await UnregisteredDeviceModel.updateOrCreateUnregisteredDevice({
+            deviceId: deviceId,
+            ipAddress: ipAddress,
+            firmwareVersion: firmwareVersion || 'unknown',
+            metrics: statusData.metrics || {}
+          });
+          
+          if (unregisteredResult.success) {
+            console.log(`✅ Added device ${deviceId} to unregistered devices`);
+            return { 
+              success: false, 
+              error: 'Device added to unregistered devices',
+              unregisteredDevice: unregisteredResult.device
+            };
+          }
+        } catch (unregError) {
+          console.error(`Error adding device to unregistered devices: ${unregError.message}`);
+        }
       }
       
       console.log(`⚠️ No device found with ID: ${identifier} or IP: ${ipAddress}`);

@@ -147,11 +147,15 @@ class MQTTHandler {    constructor() {
                 if (data.metrics) {
                     updateData.metrics = data.metrics;
                 }
-                
-                DeviceModel.updateDeviceStatus(updateTarget, updateData)
+                  DeviceModel.updateDeviceStatus(updateTarget, updateData)
                     .then(result => {
                         if (!result.success) {
-                            console.log(`❌ Failed to update device ${updateTarget}: ${result.error}`);
+                            // Check if this is an unregistered device
+                            if (result.unregisteredDevice) {
+                                console.log(`✅ Device ${deviceId || ipAddress} added to unregistered devices`);
+                            } else {
+                                console.log(`❌ Failed to update device ${updateTarget}: ${result.error}`);
+                            }
                         } else if (result.wasCreated) {
                             console.log(`🆕 Auto-registered new device ${result.device.name} from heartbeat`);
                         } else {
