@@ -2,14 +2,18 @@
 
 import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { MdDevices, MdWifiTethering, MdPowerOff } from "react-icons/md";
+import { MdDevices, MdWifiTethering, MdPowerOff, MdFullscreen, MdFullscreenExit, MdHelpOutline } from "react-icons/md";
 import { getDevices } from "../services/deviceService";
 import { theme } from "../styles/theme";
 import { LineChart } from "../components/Charts";
 import NetworkMap from "../components/NetworkMap";
+import UnregisteredDevices from "../components/UnregisteredDevices";
+import { motion, AnimatePresence } from "framer-motion";
 
 const Dashboard = () => {
     const [devices, setDevices] = useState([]);
+    const [isNetworkMapExpanded, setIsNetworkMapExpanded] = useState(false);
+    const [showUnregistered, setShowUnregistered] = useState(false);
     const [trafficData, setTrafficData] = useState([
         // Mock data for the traffic chart
         { time: '00:00', value: 45 },
@@ -19,9 +23,7 @@ const Dashboard = () => {
         { time: '16:00', value: 75 },
         { time: '20:00', value: 50 },
         { time: '23:59', value: 40 }
-    ]);
-
-    useEffect(() => {
+    ]);    useEffect(() => {
         const fetchDevices = () => {
             getDevices().then(setDevices);
         };
@@ -31,6 +33,12 @@ const Dashboard = () => {
     
         return () => clearInterval(interval); // Cleanup
     }, []);
+
+    // Handle newly registered device
+    const handleDeviceRegistered = (device) => {
+        // Refresh the device list
+        getDevices().then(setDevices);
+    };
 
     const totalDevices = devices.length;
     const activeDevices = devices.filter(device => device.status === "online" || device.status === "Online").length;
@@ -72,25 +80,77 @@ const Dashboard = () => {
                         Network Traffic
                     </h2>
                     <LineChart data={trafficData} />
-                </div>
-                <div className="bg-background-surface p-6 rounded-lg shadow-lg"
+                </div>                <div className="bg-background-surface p-6 rounded-lg shadow-lg relative"
                     style={{ background: theme.colors.background.surface }}>
-                    <h2 className="text-xl font-semibold mb-4" style={{ color: theme.colors.text.primary }}>
-                        Device Network Map
-                    </h2>
-                    <div className="h-64">
-                        <NetworkMap devices={devices} />
+                    <div className="flex justify-between items-center mb-4">
+                        <h2 className="text-xl font-semibold" style={{ color: theme.colors.text.primary }}>
+                            Device Network Map
+                        </h2>
+                        <button
+                            onClick={() => setIsNetworkMapExpanded(!isNetworkMapExpanded)}
+                            className="p-2 rounded-md hover:bg-gray-700 transition-colors"
+                            style={{ color: theme.colors.primary.main }}
+                            title={isNetworkMapExpanded ? "Collapse" : "Expand"}
+                        >
+                            {isNetworkMapExpanded ? <MdFullscreenExit size={24} /> : <MdFullscreen size={24} />}
+                        </button>
+                    </div>
+                    <div className={`${!isNetworkMapExpanded ? 'h-64' : ''}`}>
+                        <NetworkMap devices={devices} expanded={isNetworkMapExpanded} />
                     </div>
                 </div>
-            </div>
-
-            {/* Device List */}
+                
+                {/* Expanded Network Map Overlay */}
+                <AnimatePresence>
+                    {isNetworkMapExpanded && (
+                        <motion.div 
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0 }}
+                            className="fixed inset-0 z-50 bg-black bg-opacity-80 flex items-center justify-center p-8"
+                        >
+                            <motion.div 
+                                initial={{ scale: 0.9 }}
+                                animate={{ scale: 1 }}
+                                exit={{ scale: 0.9 }}
+                                className="bg-background-surface rounded-lg p-6 w-full max-w-6xl max-h-[90vh] overflow-auto"
+                                style={{ background: theme.colors.background.surface }}
+                            >
+                                <div className="flex justify-between items-center mb-6">
+                                    <h2 className="text-2xl font-semibold" style={{ color: theme.colors.text.primary }}>
+                                        Network Topology
+                                    </h2>
+                                    <button
+                                        onClick={() => setIsNetworkMapExpanded(false)}
+                                        className="p-2 rounded-md hover:bg-gray-700 transition-colors"
+                                        style={{ color: theme.colors.primary.main }}
+                                        title="Collapse"
+                                    >
+                                        <MdFullscreenExit size={28} />
+                                    </button>
+                                </div>
+                                <div className="h-[70vh]">
+                                    <NetworkMap devices={devices} expanded={isNetworkMapExpanded} />
+                                </div>
+                            </motion.div>
+                        </motion.div>
+                    )}
+                </AnimatePresence>
+            </div>            {/* Device List */}
             <div className="bg-background-surface rounded-lg shadow-lg overflow-hidden"
                 style={{ background: theme.colors.background.surface }}>
-                <div className="p-6 border-b border-gray-700">
+                <div className="p-6 border-b border-gray-700 flex justify-between items-center">
                     <h2 className="text-xl font-semibold" style={{ color: theme.colors.text.primary }}>
                         Connected Devices
                     </h2>
+                    <button
+                        onClick={() => setShowUnregistered(!showUnregistered)}
+                        className="p-2 rounded-md hover:bg-gray-700 transition-colors flex items-center"
+                        style={{ color: theme.colors.primary.main }}
+                    >
+                        <MdHelpOutline size={20} className="mr-1" />
+                        {showUnregistered ? "Hide Unregistered" : "Show Unregistered"}
+                    </button>
                 </div>
                 <div className="overflow-x-auto">
                     <table className="w-full">
@@ -109,6 +169,13 @@ const Dashboard = () => {
                         </tbody>
                     </table>
                 </div>
+                
+                {/* Unregistered Devices Section */}
+                {showUnregistered && (
+                    <div className="border-t border-gray-700 p-4">
+                        <UnregisteredDevices onDeviceRegistered={handleDeviceRegistered} />
+                    </div>
+                )}
             </div>
         </div>
     );

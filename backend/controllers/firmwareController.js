@@ -253,3 +253,58 @@ exports.deleteFirmware = async (req, res) => {
         res.status(500).json({ error: 'Failed to delete firmware' });
     }
 };
+
+exports.sendFirmwareReport = async (req, res) => {
+    try {
+        const { email, reportFormat } = req.body;
+        
+        if (!email) {
+            return res.status(400).json({ 
+                success: false,
+                error: 'Email address is required' 
+            });
+        }
+        
+        const result = await FirmwareModel.getFirmwareById(req.params.id);
+        if (!result.success) {
+            return res.status(404).json({ 
+                success: false,
+                error: 'Firmware not found' 
+            });
+        }
+        
+        const firmware = result.firmware;
+        
+        // Check if firmware has analysis results
+        if (firmware.status !== 'analyzed' || !firmware.analysis) {
+            return res.status(400).json({ 
+                success: false,
+                error: 'No analysis results available for this firmware' 
+            });
+        }
+        
+        // Import the email service
+        const { sendFirmwareAnalysisReport } = require('../utils/emailService');
+        
+        // Generate and send the report
+        const emailResult = await sendFirmwareAnalysisReport(firmware, email, reportFormat || 'pdf');
+        
+        if (!emailResult.success) {
+            return res.status(500).json({ 
+                success: false,
+                error: emailResult.error || 'Failed to send email report' 
+            });
+        }
+        
+        res.json({ 
+            success: true,
+            message: `Analysis report sent to ${email}` 
+        });
+    } catch (error) {
+        console.error('Error sending firmware report:', error);
+        res.status(500).json({ 
+            success: false,
+            error: error.message || 'Failed to send firmware report' 
+        });
+    }
+};

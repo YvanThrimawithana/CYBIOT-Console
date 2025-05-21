@@ -111,3 +111,26 @@ export const getTrafficLogs = async (ip) => {
     const data = await response.json();
     return data.logs;
 };
+
+// Get list of unregistered devices
+export const getUnregisteredDevices = async () => {
+    try {
+        const response = await axios.get(`${API_URL}/unregistered`);
+        return response.data;
+    } catch (error) {
+        throw error.response ? error.response.data.error : "Network Error";
+    }
+};
+
+// Register an unregistered device with a custom name
+export const registerUnregisteredDevice = async (deviceId, name) => {
+    try {
+        const response = await axios.post(`${API_URL}/register`, { 
+            deviceId,
+            name
+        });
+        return response.data;
+    } catch (error) {
+        throw error.response ? error.response.data.error : "Network Error";
+    }
+};

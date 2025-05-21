@@ -296,21 +296,36 @@ const deleteFirmware = async (id) => {
   }
 };
 
-// Get latest firmware for a device type
-const getLatestFirmware = async (deviceType) => {
+// Get firmware by device type
+const getFirmwareByDeviceType = async (deviceType) => {
   try {
-    const firmware = await Firmware.findOne({ 
-      deviceType,
-      isActive: true 
-    }).sort({ releaseDate: -1 });
+    const firmware = await Firmware.find({ deviceType }).sort({ uploadDate: -1 });
     
-    if (!firmware) {
-      return { success: false, error: 'No active firmware found for this device type' };
+    if (!firmware || firmware.length === 0) {
+      return { success: false, error: `No firmware found for device type: ${deviceType}` };
     }
     
     return { success: true, firmware };
   } catch (error) {
-    console.error(`Error retrieving latest firmware for ${deviceType}:`, error);
+    console.error(`Error retrieving firmware for device type ${deviceType}:`, error);
+    return { success: false, error: error.message };
+  }
+};
+
+// Get latest firmware for a device type
+const getLatestFirmware = async (deviceType) => {
+  try {
+    const firmware = await Firmware.findOne({ deviceType })
+      .sort({ uploadDate: -1 })
+      .limit(1);
+    
+    if (!firmware) {
+      return { success: false, error: 'No firmware found for this device type' };
+    }
+    
+    return { success: true, firmware };
+  } catch (error) {
+    console.error('Error getting latest firmware:', error);
     return { success: false, error: error.message };
   }
 };
@@ -322,6 +337,7 @@ module.exports = {
   addFirmware,
   updateFirmware,
   deleteFirmware,
+  getFirmwareByDeviceType,
   getLatestFirmware,
   saveAnalysisResult,
   getAnalysisResult,

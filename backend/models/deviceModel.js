@@ -28,6 +28,22 @@ const getDeviceById = async (deviceId) => {
   }
 };
 
+// Get device by deviceId (from MQTT client ID)
+const getDeviceByDeviceId = async (deviceId) => {
+  try {
+    const device = await Device.findOne({ deviceId });
+    
+    if (!device) {
+      return { success: false, error: 'Device not found' };
+    }
+    
+    return { success: true, device };
+  } catch (error) {
+    console.error(`Error retrieving device with deviceId ${deviceId}:`, error);
+    return { success: false, error: error.message };
+  }
+};
+
 // Add a new device
 const addDevice = async (deviceData) => {
   try {
@@ -37,22 +53,33 @@ const addDevice = async (deviceData) => {
     }
     
     // Check for existing device
-    const existingDevice = await Device.findOne({ 
-      $or: [
-        { deviceId: deviceData.deviceId },
-        { ipAddress: deviceData.ipAddress }
-      ]
-    });
+    const existingDevice = await Device.findOne({ deviceId: deviceData.deviceId });
     
     if (existingDevice) {
-      return { success: false, error: 'Device with this ID or IP address already exists' };
+      // If device already exists with this deviceId, just return it
+      return { success: true, device: existingDevice, existed: true };
     }
     
+    // Create the device
     const newDevice = new Device(deviceData);
     await newDevice.save();
     
-    return { success: true, device: newDevice };
+    return { success: true, device: newDevice, existed: false };
   } catch (error) {
+    // Handle duplicate key error more gracefully
+    if (error.code === 11000) {
+      // A device was created in the time between our check and save
+      // Try to get the existing device
+      try {
+        const existingDevice = await Device.findOne({ deviceId: deviceData.deviceId });
+        if (existingDevice) {
+          return { success: true, device: existingDevice, existed: true };
+        }
+      } catch (innerError) {
+        console.error('Error retrieving existing device after duplicate key error:', innerError);
+      }
+    }
+    
     console.error('Error creating device:', error);
     return { success: false, error: error.message };
   }
@@ -143,48 +170,137 @@ const deleteDevice = async (deviceId) => {
 };
 
 // Update device status
-const updateDeviceStatus = async (deviceIp, status) => {
+const updateDeviceStatus = async (identifier, statusData) => {
   try {
-    // Normalize status to lowercase for consistency
-    const normalizedStatus = status.toLowerCase();
+    // Check if we have required data
+    if (!identifier) {
+      return { success: false, error: 'Device identifier is required' };
+    }
+
+    // Handle both string status and object format
+    let normalizedStatus = 'unknown';
+    let ipAddress = identifier; // Default to using identifier as IP address
+    let deviceId = null;
+    let firmwareVersion = null;
     
-    console.log(`📝 Attempting to update device status for ${deviceIp} to ${normalizedStatus}`);
+    if (typeof statusData === 'string') {
+      normalizedStatus = statusData.toLowerCase();
+    } else if (statusData && typeof statusData === 'object') {
+      normalizedStatus = statusData.status ? statusData.status.toLowerCase() : 'unknown';
+      ipAddress = statusData.ipAddress || statusData.ip_address || identifier;
+      deviceId = statusData.deviceId || statusData.device_id || null;
+      firmwareVersion = statusData.firmwareVersion || statusData.firmware_version || null;
+    }
     
-    // Look up device by IP address
-    const device = await Device.findOneAndUpdate(
-      { ipAddress: deviceIp },
-      { 
-        status: normalizedStatus,
-        lastSeen: new Date()
-      },
-      { new: true }
-    );
+    console.log(`📝 Attempting to update device status for ${identifier} to ${normalizedStatus}`);
     
-    if (!device) {
-      // Try with 'ip' field as fallback (for backward compatibility)
-      const deviceByIp = await Device.findOneAndUpdate(
-        { ip: deviceIp },
+    // First try to find by deviceId if it looks like a device ID (not an IP address)
+    // Most device IDs won't contain dots, whereas IPs do
+    let device = null;
+    
+    if (!identifier.includes('.')) {
+      // This might be a device ID
+      device = await Device.findOneAndUpdate(
+        { deviceId: identifier },
         { 
           status: normalizedStatus,
           lastSeen: new Date()
         },
         { new: true }
       );
-      
-      if (!deviceByIp) {
-        console.log(`⚠️ No device found with IP: ${deviceIp}`);
-        return { success: false, error: 'Device not found' };
-      }
-      
-      console.log(`✅ Updated status for ${deviceByIp.name} (${deviceIp}) to ${normalizedStatus}`);
-      return { success: true, device: deviceByIp };
     }
     
-    console.log(`✅ Updated status for ${device.name} (${deviceIp}) to ${normalizedStatus}`);
+    // If not found or if original identifier looks like an IP, try by IP address
+    if (!device) {
+      device = await Device.findOneAndUpdate(
+        { ipAddress: ipAddress },
+        { 
+          status: normalizedStatus,
+          lastSeen: new Date()
+        },
+        { new: true }
+      );
+    }
+    
+    // If still not found but we have an explicit deviceId, try that
+    if (!device && deviceId) {
+      device = await Device.findOneAndUpdate(
+        { deviceId: deviceId },
+        { 
+          status: normalizedStatus,
+          lastSeen: new Date(),
+          ipAddress: ipAddress // Update IP if we find by device ID
+        },
+        { new: true }
+      );
+    }
+    
+    // Last attempt - try _id if it looks like a MongoDB ID
+    if (!device && identifier.length === 24 && /^[0-9a-fA-F]{24}$/.test(identifier)) {
+      try {
+        const mongoose = require('mongoose');
+        const mongoId = new mongoose.Types.ObjectId(identifier);
+        
+        device = await Device.findOneAndUpdate(
+          { _id: mongoId },
+          { 
+            status: normalizedStatus,
+            lastSeen: new Date()
+          },
+          { new: true }
+        );
+      } catch (err) {
+        console.log('Error converting to ObjectId:', err);
+      }
+    }
+    
+    if (!device) {
+      // If this has a device_id from heartbeat, auto-register it
+      if (deviceId && ipAddress) {
+        console.log(`🆕 Auto-registering new device with ID ${deviceId} and IP ${ipAddress}`);
+        
+        // Create a new device with basic information from heartbeat
+        const newDevice = new Device({
+          deviceId: deviceId,
+          ipAddress: ipAddress,
+          name: `Device_${deviceId.substring(0, 8)}`,  // Create a default name using first 8 chars of ID
+          status: normalizedStatus,
+          createdAt: Date.now(),
+          lastSeen: new Date(),
+          firmwareVersion: firmwareVersion || "Unknown"
+        });
+        
+        await newDevice.save();
+        console.log(`✅ Created and registered new device ${newDevice.name} with ID ${deviceId}`);
+        return { success: true, device: newDevice, wasCreated: true };
+      }
+      
+      console.log(`⚠️ No device found with ID: ${identifier} or IP: ${ipAddress}`);
+      return { success: false, error: 'Device not found' };
+    }
+    
+    console.log(`✅ Updated status for device ${device.name || device.deviceId} (${device.ipAddress || identifier}) to ${normalizedStatus}`);
     return { success: true, device };
   } catch (error) {
-    console.error(`❌ Error updating device status for IP ${deviceIp}:`, error);
+    console.error(`❌ Error updating device status for identifier ${identifier}:`, error);
     return { success: false, error: error.message };
+  }
+};
+
+// Find or create a device (upsert operation)
+const findOneAndUpdate = async (query, deviceData, options = {}) => {
+  try {
+    // Use Mongoose's findOneAndUpdate with upsert
+    const device = await Device.findOneAndUpdate(
+      query,
+      deviceData,
+      { new: true, ...options }
+    );
+    
+    return device;
+  } catch (error) {
+    console.error('Error in findOneAndUpdate:', error);
+    throw error; // Let the caller handle the error
   }
 };
 
@@ -197,4 +313,6 @@ module.exports = {
   deleteDevice,
   deleteDeviceFromStorage: deleteDevice, // Add alias for deleteDeviceFromStorage to match controller imports
   updateDeviceStatus,
+  getDeviceByDeviceId,
+  findOneAndUpdate, // Add new function for upsert operations
 };

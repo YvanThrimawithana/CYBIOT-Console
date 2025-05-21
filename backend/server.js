@@ -8,6 +8,7 @@ const userRoutes = require("./routes/userRoutes");
 const deviceRoutes = require("./routes/deviceRoutes");
 const trafficLogRoutes = require("./routes/trafficRoutes");
 const firmwareRoute = require("./routes/firmwareRoute");
+const deviceFirmwareRoute = require("./routes/deviceFirmwareRoute"); // Import device firmware update routes
 const alertRoutes = require("./routes/alertRoutes"); // Import alert routes
 const networkScanRoutes = require("./routes/networkScanRoutes"); // Add network scan routes
 const { startTrafficMonitoring } = require("./utils/trafficMonitor"); // Import traffic monitoring
@@ -16,10 +17,30 @@ const path = require('path');
 const userModel = require('./models/userModel');
 const User = require('./models/mongoSchemas/userSchema');
 
+// Initialize WebSocket Server
+const WebSocket = require('ws');
+const wss = new WebSocket.Server({ port: 8080 });
+
+// Set up WebSocket connection handling
+wss.on('connection', (ws) => {
+  console.log('New WebSocket client connected');
+  
+  ws.on('message', (message) => {
+    console.log('Received WebSocket message:', message);
+  });
+  
+  ws.on('close', () => {
+    console.log('WebSocket client disconnected');
+  });
+});
+
+// Make WebSocket server available globally
+global.wss = wss;
+console.log('✅ WebSocket server initialized and made globally available');
+
 // Initialize MQTT Handler and export it for other modules to use
-const MQTTHandler = require('./mqtt/mqttHandler');
-const mqttHandler = new MQTTHandler();
-global.mqttHandler = mqttHandler;
+const { getInstance } = require('./mqtt/mqttHandler');
+const mqttHandler = getInstance();
 
 // Log successful MQTT initialization
 console.log('🚀 MQTT Handler initialized and connected to broker');
@@ -108,6 +129,7 @@ app.use("/api/users", userRoutes);
 app.use("/api/devices", deviceRoutes);
 app.use("/api/traffic", trafficLogRoutes);
 app.use("/api/firmware", firmwareRoute);
+app.use("/api/device-firmware", deviceFirmwareRoute); // Register device firmware update routes
 app.use("/api/alerts", alertRoutes); // Register alert routes
 app.use("/api/network-scan", networkScanRoutes); // Register network scan routes
 

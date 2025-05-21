@@ -1,6 +1,8 @@
+
+
 export const getTrafficData = async () => {
     try {
-        const response = await fetch('http://localhost:5000/api/traffic/network');
+        const response = await fetch(API_ENDPOINTS.TRAFFIC_NETWORK);
         if (!response.ok) throw new Error('Failed to fetch traffic data');
         return await response.json();
     } catch (error) {

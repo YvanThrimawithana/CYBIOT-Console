@@ -1,0 +1,14 @@
+[Unit]
+Description=CybIOT Firmware Updater Service
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/python3 /home/pi/cybiot/firmware_updater.py --broker 192.168.1.7
+WorkingDirectory=/home/pi/cybiot
+StandardOutput=inherit
+StandardError=inherit
+Restart=always
+User=pi
+
+[Install]
+WantedBy=multi-user.target

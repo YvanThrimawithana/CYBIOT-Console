@@ -96,10 +96,13 @@ const Navbar = () => {
 
     return (
         <div className="flex min-h-screen bg-background-surface">
-            {/* Sidebar Navigation */}
-            <div className="w-64 fixed left-0 top-0 h-screen p-4 flex flex-col border-r border-gray-800">
-                <div className="mb-8 p-4">
-                    <h1 className="text-xl font-bold text-primary-main">CYBIOT - SecureIOT</h1>
+            {/* Sidebar Navigation */}            <div className="w-64 fixed left-0 top-0 h-screen p-4 flex flex-col border-r border-gray-800">
+                <div className="mb-2 p-2 flex justify-center">
+                    <img 
+                        src="/cybiot-logo.png" 
+                        alt="CYBIOT Logo" 
+                        className="max-h-28 w-auto"
+                    />
                 </div>
 
                 <nav className="flex-1">

@@ -2,22 +2,21 @@ import React, { useEffect, useRef } from 'react';
 import * as d3 from 'd3';
 import { theme } from '../styles/theme';
 
-const NetworkMap = ({ devices }) => {
+const NetworkMap = ({ devices, expanded = false }) => {
   const svgRef = useRef(null);
 
   useEffect(() => {
     if (!devices || devices.length === 0) return;
     
     drawNetworkMap();
-  }, [devices]);
-
+  }, [devices, expanded]);
   const drawNetworkMap = () => {
     // Clear previous rendering
     d3.select(svgRef.current).selectAll("*").remove();
 
     // Get dimensions
     const containerWidth = svgRef.current.clientWidth;
-    const containerHeight = 300; // Fixed height
+    const containerHeight = expanded ? 600 : 300; // Height adjusts based on expanded state
 
     // Create SVG
     const svg = d3.select(svgRef.current)
@@ -46,25 +45,26 @@ const NetworkMap = ({ devices }) => {
       source: 'hub',
       target: device.ipAddress || device.ip,
       status: (device.status || '').toLowerCase()
-    }));
-
-    // Set up force simulation with improved spacing parameters
+    }));    // Set up force simulation with improved spacing parameters
+    // Adjust force parameters based on expanded state
+    const linkDistance = expanded ? 200 : 150;
+    const chargeStrength = expanded ? -600 : -400; 
+    const collisionRadius = expanded ? 60 : 40;
+    
     const simulation = d3.forceSimulation(nodes)
-      .force('link', d3.forceLink(links).id(d => d.id).distance(150)) // Increased distance between nodes
-      .force('charge', d3.forceManyBody().strength(-400)) // Stronger repulsion between nodes
+      .force('link', d3.forceLink(links).id(d => d.id).distance(linkDistance))
+      .force('charge', d3.forceManyBody().strength(chargeStrength))
       .force('center', d3.forceCenter(containerWidth / 2, containerHeight / 2))
-      .force('collision', d3.forceCollide().radius(40)) // Increased collision radius
-      .force('x', d3.forceX(containerWidth / 2).strength(0.05)) // Gentle force toward center x
-      .force('y', d3.forceY(containerHeight / 2).strength(0.05)); // Gentle force toward center y
-
-    // Add links
+      .force('collision', d3.forceCollide().radius(collisionRadius))
+      .force('x', d3.forceX(containerWidth / 2).strength(0.05))
+      .force('y', d3.forceY(containerHeight / 2).strength(0.05));    // Add links
     const link = svg.append('g')
       .selectAll('line')
       .data(links)
       .enter()
       .append('line')
       .attr('stroke', d => d.status === 'online' ? theme.colors.status.success : '#555')
-      .attr('stroke-width', 2)
+      .attr('stroke-width', expanded ? 3 : 2)
       .attr('stroke-opacity', 0.8);
 
     // Add breathing animation to online links
@@ -72,8 +72,27 @@ const NetworkMap = ({ devices }) => {
       .append('animate')
       .attr('attributeName', 'stroke-opacity')
       .attr('values', '0.3;0.8;0.3')
-      .attr('dur', '2s')
+      .attr('dur', expanded ? '1.5s' : '2s')
       .attr('repeatCount', 'indefinite');
+      
+    // In expanded mode, add data flow animation for online links
+    if (expanded) {
+      svg.append('defs').selectAll('marker')
+        .data(['online', 'offline'])
+        .enter().append('marker')
+        .attr('id', d => `arrow-${d}`)
+        .attr('viewBox', '0 -5 10 10')
+        .attr('refX', d => d === 'online' ? 30 : 25)
+        .attr('refY', 0)
+        .attr('markerWidth', 6)
+        .attr('markerHeight', 6)
+        .attr('orient', 'auto')
+        .append('path')
+        .attr('fill', d => d === 'online' ? theme.colors.status.success : '#555')
+        .attr('d', 'M0,-5L10,0L0,5');
+        
+      link.attr('marker-end', d => `url(#arrow-${d.status})`);
+    }
 
     // Add nodes
     const node = svg.append('g')
@@ -84,43 +103,55 @@ const NetworkMap = ({ devices }) => {
       .call(d3.drag()
         .on('start', dragstarted)
         .on('drag', dragged)
-        .on('end', dragended));
-
-    // Add circle for each node
+        .on('end', dragended));    // Add circle for each node
     node.append('circle')
-      .attr('r', d => d.id === 'hub' ? 20 : 15)
+      .attr('r', d => {
+        if (d.id === 'hub') return expanded ? 28 : 20;
+        return expanded ? 20 : 15;
+      })
       .attr('fill', d => {
         if (d.id === 'hub') return theme.colors.primary.main;
         return d.status === 'online' ? theme.colors.status.success : '#555';
       })
       .attr('stroke', '#ffffff')
-      .attr('stroke-width', 2);
+      .attr('stroke-width', expanded ? 3 : 2);
 
     // Add pulsating animation to online nodes
     node.filter(d => d.status === 'online' && d.id !== 'hub')
       .select('circle')
       .append('animate')
       .attr('attributeName', 'r')
-      .attr('values', '13;15;13')
+      .attr('values', expanded ? '18;21;18' : '13;15;13')
       .attr('dur', '2s')
-      .attr('repeatCount', 'indefinite');
-
-    // Add labels
+      .attr('repeatCount', 'indefinite');    // Add labels
     node.append('text')
-      .attr('dy', d => d.id === 'hub' ? -25 : 25)
+      .attr('dy', d => d.id === 'hub' ? (expanded ? -35 : -25) : (expanded ? 30 : 25))
       .attr('text-anchor', 'middle')
       .attr('fill', theme.colors.text.primary)
-      .style('font-size', '12px')
+      .style('font-size', expanded ? '14px' : '12px')
+      .style('font-weight', expanded ? 'bold' : 'normal')
       .text(d => d.name);
 
     // Add IP address for devices (not hub)
     node.filter(d => d.id !== 'hub')
       .append('text')
-      .attr('dy', 40)
+      .attr('dy', expanded ? 48 : 40)
       .attr('text-anchor', 'middle')
       .attr('fill', theme.colors.text.secondary)
-      .style('font-size', '10px')
+      .style('font-size', expanded ? '12px' : '10px')
       .text(d => d.id);
+      
+    // Add status indicator text in expanded mode
+    if (expanded) {
+      node.filter(d => d.id !== 'hub')
+        .append('text')
+        .attr('dy', 65)
+        .attr('text-anchor', 'middle')
+        .attr('fill', d => d.status === 'online' ? theme.colors.status.success : theme.colors.status.error)
+        .style('font-size', '11px')
+        .style('font-weight', 'bold')
+        .text(d => d.status === 'online' ? 'ONLINE' : 'OFFLINE');
+    }
 
     // Initial positioning - spread devices in a circle around the hub for better starting positions
     const radius = Math.min(containerWidth, containerHeight) * 0.4;
@@ -174,10 +205,11 @@ const NetworkMap = ({ devices }) => {
       }
     }
   };
-
   return (
     <div className="w-full h-full overflow-hidden">
-      <svg ref={svgRef} className="w-full h-full"></svg>
+      <svg ref={svgRef} className="w-full h-full" 
+        style={{ minHeight: expanded ? '600px' : '300px' }}>
+      </svg>
     </div>
   );
 };

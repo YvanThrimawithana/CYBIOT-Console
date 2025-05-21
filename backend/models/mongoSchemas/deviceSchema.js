@@ -9,13 +9,19 @@ const deviceSchema = new mongoose.Schema({
   },
   name: {
     type: String,
-    required: true,
-    trim: true
+    required: false,
+    default: function() {
+      return `Device-${this.deviceId.substring(0, 8)}`;
+    }
+  },
+  deviceType: {
+    type: String,
+    required: false,
+    default: 'raspberrypi'
   },
   ipAddress: {
     type: String,
-    required: true,
-    trim: true
+    required: false
   },
   // Alias for backward compatibility
   ip: {
@@ -24,7 +30,7 @@ const deviceSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['online', 'offline', 'unknown'],
+    required: false,
     default: 'offline',
     set: function(val) {
       // Normalize status to lowercase
@@ -33,22 +39,42 @@ const deviceSchema = new mongoose.Schema({
   },
   lastSeen: {
     type: Date,
-    default: null
+    default: Date.now
   },
-  deviceType: {
+  firmware: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Firmware',
+    required: false
+  },
+  firmwareVersion: {
     type: String,
-    trim: true
+    required: false,
+    default: 'unknown'
   },
-  currentFirmware: {
+  updateScheduled: {
+    type: Boolean,
+    default: false
+  },
+  scheduledUpdateTime: {
+    type: Date,
+    required: false
+  },
+  scheduledFirmwareId: {
     type: String,
-    default: 'No firmware'
+    required: false
   },
-  previousFirmware: {
+  metrics: {
+    type: Object,
+    required: false,
+    default: {}
+  },
+  managementUser: {
     type: String,
-    default: null
+    required: false
   },
-  url: {
-    type: String
+  createdAt: {
+    type: Date,
+    default: Date.now
   }
 }, {
   timestamps: true

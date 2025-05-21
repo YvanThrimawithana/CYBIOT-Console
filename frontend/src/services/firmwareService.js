@@ -174,6 +174,19 @@ export const markFirmwareAsStable = async (firmwareId) => {
     }
 };
 
+export const sendFirmwareReport = async (firmwareId, email, reportFormat = 'pdf') => {
+    try {
+        const response = await api.post(`/firmware/${firmwareId}/send-report`, { 
+            email,
+            reportFormat
+        });
+        return response.data;
+    } catch (error) {
+        console.error('Error sending firmware report:', error);
+        throw error.response?.data?.error || "Failed to send firmware report";
+    }
+};
+
 export const downloadFirmware = async (firmwareId) => {
     try {
         const response = await api.get(`/firmware/${firmwareId}/download`, { 
