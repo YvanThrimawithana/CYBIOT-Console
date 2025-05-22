@@ -4,7 +4,7 @@ const { auth } = require('../middleware/auth');
 const { 
     getAvailableFirmwareForDevice,
     scheduleDeviceFirmwareUpdate,
-    sendFirmwareUpdate
+    updateDeviceFirmware
 } = require('../controllers/deviceController');
 
 // Get available firmware for a device
@@ -14,6 +14,6 @@ router.get('/devices/:deviceId/firmware', auth, getAvailableFirmwareForDevice);
 router.post('/devices/:deviceId/firmware/schedule', auth, scheduleDeviceFirmwareUpdate);
 
 // Send firmware update immediately to a device
-router.post('/devices/:deviceId/firmware/update', auth, sendFirmwareUpdate);
+router.post('/update-firmware', auth, updateDeviceFirmware);
 
 module.exports = router;

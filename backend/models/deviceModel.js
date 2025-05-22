@@ -15,7 +15,28 @@ const getAllDevices = async () => {
 // Get device by ID
 const getDeviceById = async (deviceId) => {
   try {
-    const device = await Device.findOne({ deviceId });
+    // Try different ID formats to increase chance of finding the device
+    let device = null;
+    
+    // First check if it looks like a MongoDB ObjectId
+    if (deviceId && deviceId.length === 24 && /^[0-9a-fA-F]{24}$/.test(deviceId)) {
+      try {
+        // Try to find by _id
+        device = await Device.findById(deviceId);
+      } catch (err) {
+        console.log('Not a valid ObjectId, continuing with other lookups');
+      }
+    }
+    
+    // If not found by _id, try deviceId field
+    if (!device) {
+      device = await Device.findOne({ deviceId });
+    }
+    
+    // Also try ipAddress if it looks like an IP 
+    if (!device && deviceId && deviceId.includes('.')) {
+      device = await Device.findOne({ ipAddress: deviceId });
+    }
     
     if (!device) {
       return { success: false, error: 'Device not found' };

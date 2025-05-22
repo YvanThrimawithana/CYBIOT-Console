@@ -8,7 +8,7 @@ const userRoutes = require("./routes/userRoutes");
 const deviceRoutes = require("./routes/deviceRoutes");
 const trafficLogRoutes = require("./routes/trafficRoutes");
 const firmwareRoute = require("./routes/firmwareRoute");
-const deviceFirmwareRoute = require("./routes/deviceFirmwareRoute"); // Import device firmware update routes
+const deviceFirmwareRoute = require("./routes/deviceFirmwareRoute");
 const alertRoutes = require("./routes/alertRoutes"); // Import alert routes
 const networkScanRoutes = require("./routes/networkScanRoutes"); // Add network scan routes
 const { startTrafficMonitoring } = require("./utils/trafficMonitor"); // Import traffic monitoring
@@ -129,7 +129,7 @@ app.use("/api/users", userRoutes);
 app.use("/api/devices", deviceRoutes);
 app.use("/api/traffic", trafficLogRoutes);
 app.use("/api/firmware", firmwareRoute);
-app.use("/api/device-firmware", deviceFirmwareRoute); // Register device firmware update routes
+app.use("/api/devices", deviceFirmwareRoute); // Register device firmware routes
 app.use("/api/alerts", alertRoutes); // Register alert routes
 app.use("/api/network-scan", networkScanRoutes); // Register network scan routes
 

@@ -20,10 +20,23 @@ const DeviceUpdater = ({ selectedFirmware, onUpdateSuccess, onRevertSuccess }) =
         
         setUpdating(true);
         try {
-            await updateDeviceFirmware(selectedDevices, selectedFirmware.id);
+            // Make sure we're passing a proper firmware ID
+            if (!selectedFirmware.id) {
+                throw new Error('Selected firmware does not have a valid ID');
+            }
+            
+            // Filter out any invalid device IDs
+            const validDevices = selectedDevices.filter(id => id && id.trim() !== '');
+            
+            if (validDevices.length === 0) {
+                throw new Error('No valid devices selected');
+            }
+            
+            await updateDeviceFirmware(validDevices, selectedFirmware.id);
             onUpdateSuccess?.();
         } catch (error) {
             console.error('Update failed:', error);
+            alert(`Update failed: ${error.message || 'Unknown error'}`);
         } finally {
             setUpdating(false);
         }

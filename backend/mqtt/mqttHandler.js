@@ -199,73 +199,117 @@ class MQTTHandler {    constructor() {
         const logFilePath = path.join(__dirname, 'network_traffic.log');
         const logEntry = `${log.timestamp} - Topic: ${log.topic} - Message: ${log.message}\n`;
         fs.appendFileSync(logFilePath, logEntry);
-    }
-    
-    async sendFirmwareToDevice(deviceId, originalDeviceId = null) {
+    }    async sendFirmwareToDevice(deviceId, firmwareId) {
         try {
             console.log(`🔄 Processing firmware request for device ${deviceId}`);
             
-            // Get device info from MongoDB to determine which firmware to send
-            const DeviceModel = require('../models/deviceModel');
             const FirmwareModel = require('../models/firmwareModel');
+            const DeviceModel = require('../models/deviceModel');
+            const UnregisteredDeviceModel = require('../models/unregisteredDeviceModel');
             
-            const deviceResult = await DeviceModel.getDeviceById(deviceId);
-            if (!deviceResult || !deviceResult.success) {
-                console.error(`❌ Device not found: ${deviceId}`);
-                return;
+            if (!deviceId) {
+                throw new Error('Device ID is required');
             }
             
-            const device = deviceResult.device;
-            const deviceType = device.deviceType || 'raspberrypi';
+            if (!firmwareId) {
+                throw new Error('Firmware ID is required');
+            }
             
-            // Get the latest firmware for this device type
-            const firmwareResult = await FirmwareModel.getLatestFirmware(deviceType);
-            if (!firmwareResult || !firmwareResult.success) {
-                console.error(`❌ No firmware found for device type: ${deviceType}`);
-                return;
+            // First, check if the device exists
+            let device = null;
+            let deviceFound = false;
+            
+            // Try to find in registered devices
+            const deviceResult = await DeviceModel.getDeviceByDeviceId(deviceId);
+            if (deviceResult.success) {
+                device = deviceResult.device;
+                deviceFound = true;
+                console.log(`Device found in registered devices: ${device.name || deviceId}`);
+            } else {
+                // Try to find in unregistered devices
+                const unregisteredResult = await UnregisteredDeviceModel.getUnregisteredDeviceByDeviceId(deviceId);
+                if (unregisteredResult.success) {
+                    device = unregisteredResult.device;
+                    deviceFound = true;
+                    console.log(`Device found in unregistered devices: ${deviceId}`);
+                } else {
+                    // As a last resort, try by MongoDB _id
+                    try {
+                        const byIdResult = await DeviceModel.getDeviceById(deviceId);
+                        if (byIdResult.success) {
+                            device = byIdResult.device;
+                            deviceFound = true;
+                            console.log(`Device found by MongoDB ID: ${device.name || deviceId}`);
+                            
+                            // If device has a deviceId field, use that for MQTT topics
+                            if (device.deviceId) {
+                                deviceId = device.deviceId;
+                                console.log(`Using actual device ID for MQTT: ${deviceId}`);
+                            }
+                        }
+                    } catch (idError) {
+                        console.log(`Error looking up device by MongoDB ID: ${idError.message}`);
+                    }
+                }
+            }
+            
+            if (!deviceFound) {
+                throw new Error('Device not found in either registered or unregistered devices');
+            }
+            
+            // Get firmware file
+            let firmwareResult;
+            if (firmwareId) {
+                firmwareResult = await FirmwareModel.getFirmwareById(firmwareId);
+            } else {
+                firmwareResult = await FirmwareModel.getLatestFirmware('raspberrypi');
+            }
+            
+            if (!firmwareResult.success) {
+                throw new Error('No suitable firmware found');
             }
             
             const firmware = firmwareResult.firmware;
-            const firmwareId = firmware._id.toString();
             
-            // Get the firmware file binary
-            const fileBuffer = await FirmwareModel.getFirmwareFile(firmwareId);
+            // Get the firmware binary
+            const fileBuffer = await FirmwareModel.getFirmwareFile(firmware._id.toString());
             if (!fileBuffer) {
-                console.error(`❌ Failed to retrieve firmware binary: ${firmwareId}`);
-                return;
+                throw new Error('Failed to retrieve firmware binary');
             }
             
-            // Create firmware info header
+            // Send firmware info
             const firmwareInfo = {
                 name: firmware.name,
                 version: firmware.version,
-                hash: firmware.hash,
-                device_type: deviceType,
+                hash: firmware.hash || hashlib.sha256(fileBuffer).toString('hex'),
                 size: fileBuffer.length,
+                requires_reboot: firmware.requiresReboot || false,
                 timestamp: Date.now()
             };
             
-            // Create binary message with JSON header and binary data
-            // Format: JSON metadata followed by null byte, then the binary data
-            const infoBuffer = Buffer.from(JSON.stringify(firmwareInfo) + '\0');
-            const completeBuffer = Buffer.concat([infoBuffer, fileBuffer]);
+            console.log(`📤 Sending firmware to device ${deviceId}`);
             
-            // Send the firmware to the device
-            console.log(`📤 Sending firmware ${firmware.name} v${firmware.version} to device ${deviceId}`);
-            this.client.publish(`${this.firmwareTopicPrefix}${deviceId}`, completeBuffer, { qos: 1 });
+            // Send firmware info first
+            await this.client.publish(
+                `${this.firmwareTopicPrefix}${deviceId}/info`,
+                JSON.stringify(firmwareInfo),
+                { qos: 2 }
+            );
             
-            // Update device record to indicate firmware was sent
-            await DeviceModel.updateDevice(deviceId, {
-                lastFirmwareSent: new Date(),
-                lastFirmwareId: firmwareId,
-                updateStatus: 'sent'
-            });
+            // Send the full firmware data
+            await this.client.publish(
+                `${this.firmwareTopicPrefix}${deviceId}/data`,
+                fileBuffer,
+                { qos: 2 }
+            );
             
-            console.log(`✅ Firmware sent to device ${deviceId}`);
+            console.log(`✅ Firmware sent successfully to device ${deviceId}`);
+            return true;
         } catch (error) {
             console.error(`❌ Error sending firmware: ${error.message}`);
+            throw error;
         }
-    }    checkDevicesStatus() {
+    }checkDevicesStatus() {
         // Use MongoDB device checking instead
         // The deviceController.js already handles this via interval
         console.log('🔍 MQTT handler checking device statuses...');

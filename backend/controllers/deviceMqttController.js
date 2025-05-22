@@ -119,9 +119,21 @@ exports.registerUnregisteredDevice = async (deviceId, name) => {
  */
 exports.scheduleFirmwareUpdate = async (deviceId, scheduledTime, firmwareId) => {
     try {
-        const device = await DeviceModel.getDeviceByDeviceId(deviceId);
-        if (!device.success) {
-            return { success: false, error: 'Device not found' };
+        // Check device in both registered and unregistered collections
+        const deviceResult = await DeviceModel.getDeviceByDeviceId(deviceId);
+        let device;
+        let isUnregistered = false;
+
+        if (!deviceResult.success) {
+            // Check unregistered devices
+            const unregisteredResult = await UnregisteredDeviceModel.getUnregisteredDeviceByDeviceId(deviceId);
+            if (!unregisteredResult.success) {
+                return { success: false, error: 'Device not found' };
+            }
+            device = unregisteredResult.device;
+            isUnregistered = true;
+        } else {
+            device = deviceResult.device;
         }
 
         // Get firmware details
@@ -149,11 +161,17 @@ exports.scheduleFirmwareUpdate = async (deviceId, scheduledTime, firmwareId) => 
         );
 
         // Update device record
-        await DeviceModel.updateDevice(deviceId, {
+        const updateData = {
             updateScheduled: true,
             scheduledUpdateTime: new Date(scheduledTime * 1000),
             scheduledFirmwareId: firmwareId
-        });
+        };
+
+        if (isUnregistered) {
+            await UnregisteredDeviceModel.updateUnregisteredDevice(deviceId, updateData);
+        } else {
+            await DeviceModel.updateDevice(deviceId, updateData);
+        }
 
         return { 
             success: true, 
@@ -176,11 +194,26 @@ exports.sendFirmwareNow = async (deviceId, firmwareId) => {
             return { success: false, error: 'MQTT handler not available' };
         }
 
+        // Validate device exists and is online
+        const deviceModel = require('../models/deviceModel');
+        const deviceResult = await deviceModel.getDeviceById(deviceId);
+        
+        if (!deviceResult.success) {
+            // Try finding by device ID if initial lookup fails
+            const byIdResult = await deviceModel.getDeviceByDeviceId(deviceId);
+            if (!byIdResult.success) {
+                return { success: false, error: 'Device not found or not registered' };
+            }
+            deviceId = byIdResult.device.deviceId;
+        }
+
+        // Send firmware update
         await mqttHandler.sendFirmwareToDevice(deviceId, firmwareId);
 
         return { 
             success: true, 
-            message: 'Firmware update sent successfully' 
+            message: 'Firmware update sent successfully',
+            deviceId: deviceId 
         };
     } catch (error) {
         console.error('Error sending firmware update:', error);

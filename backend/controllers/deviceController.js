@@ -3,6 +3,15 @@ const FirmwareModel = require("../models/firmwareModel");
 const UnregisteredDeviceModel = require("../models/unregisteredDeviceModel");
 const { scheduleFirmwareUpdate, sendFirmwareNow, registerUnregisteredDevice: registerDevice } = require("./deviceMqttController");
 
+// Helper function to get the MQTT handler safely
+const getMqttHandler = () => {
+    if (global.mqttHandler) {
+        return global.mqttHandler;
+    }
+    console.error("MQTT handler not found in global scope");
+    return null;
+};
+
 // Track heartbeat timestamp by IP address
 const lastHeartbeats = {}; 
 
@@ -346,6 +355,18 @@ exports.scheduleDeviceFirmwareUpdate = async (req, res) => {
             return res.status(400).json({ success: false, error: "Scheduled time is required" });
         }
         
+        // Check if device exists (in either registered or unregistered devices)
+        const deviceResult = await DeviceModel.getDeviceByDeviceId(deviceId);
+        const isRegistered = deviceResult.success;
+        
+        if (!isRegistered) {
+            // Check unregistered devices
+            const unregisteredResult = await UnregisteredDeviceModel.getUnregisteredDeviceByDeviceId(deviceId);
+            if (!unregisteredResult.success) {
+                return res.status(404).json({ success: false, error: "Device not found" });
+            }
+        }
+        
         // Convert scheduledTime to Unix timestamp if it's not already
         let scheduleTimestamp = scheduledTime;
         if (typeof scheduledTime === 'string') {
@@ -371,24 +392,83 @@ exports.scheduleDeviceFirmwareUpdate = async (req, res) => {
  */
 exports.sendFirmwareUpdate = async (req, res) => {
     try {
-        const { deviceId } = req.params;
-        const { firmwareId } = req.body;
-        
+        const { deviceId, firmwareId } = req.body;
+        console.log('Received firmware update request:', { deviceId, firmwareId });
+
         if (!deviceId) {
-            return res.status(400).json({ success: false, error: "Device ID is required" });
+            return res.status(400).json({ 
+                success: false, 
+                error: 'Device ID is required' 
+            });
         }
-        
-        // Send the firmware update immediately
-        const result = await sendFirmwareNow(deviceId, firmwareId);
-        
-        if (!result.success) {
-            return res.status(400).json(result);
+
+        if (!firmwareId) {
+            return res.status(400).json({ 
+                success: false, 
+                error: 'Firmware ID is required' 
+            });
         }
-        
-        res.json(result);
+
+        // Get MQTT handler
+        const mqttHandler = getMqttHandler();
+        if (!mqttHandler) {
+            return res.status(500).json({ 
+                success: false, 
+                error: 'MQTT handler not available' 
+            });
+        }
+
+        // Convert to array if needed
+        const deviceIds = Array.isArray(deviceId) ? deviceId : [deviceId];
+
+        // Handle empty array
+        if (deviceIds.length === 0) {
+            return res.status(400).json({
+                success: false,
+                error: 'No device IDs provided'
+            });
+        }
+
+        // Send firmware to each device
+        const updateResults = await Promise.all(
+            deviceIds.map(async (id) => {
+                try {
+                    if (!id || id.trim() === '') {
+                        return { deviceId: id, success: false, error: 'Invalid device ID' };
+                    }
+                    await mqttHandler.sendFirmwareToDevice(id, firmwareId);
+                    return { deviceId: id, success: true };
+                } catch (error) {
+                    console.error(`Error updating device ${id}:`, error);
+                    return { deviceId: id, success: false, error: error.message };
+                }
+            })
+        );
+
+        // Check if any updates were successful
+        const anySuccess = updateResults.some(result => result.success);
+
+        if (!anySuccess) {
+            return res.status(404).json({
+                success: false,
+                error: 'Failed to update any devices',
+                results: updateResults
+            });
+        }
+
+        // Return results
+        res.json({
+            success: true,
+            message: 'Firmware update initiated',
+            results: updateResults
+        });
+
     } catch (error) {
-        console.error("Error sending firmware update:", error);
-        res.status(500).json({ success: false, error: error.message });
+        console.error('Error sending firmware update:', error);
+        res.status(500).json({ 
+            success: false, 
+            error: error.message || 'Internal server error' 
+        });
     }
 };
 
@@ -505,6 +585,116 @@ const registerUnregisteredDevice = async (req, res) => {
     }
 };
 
+exports.updateDeviceFirmware = async (req, res) => {
+    try {
+        const { deviceId, firmwareId } = req.body;
+        
+        console.log('Firmware update request received:', { deviceId, firmwareId });
+        
+        if (!deviceId || !firmwareId) {
+            return res.status(400).json({ 
+                success: false, 
+                error: 'Device ID and firmware ID are required' 
+            });
+        }
+
+        // Get MQTT handler
+        const mqttHandler = getMqttHandler();
+        if (!mqttHandler) {
+            return res.status(500).json({ 
+                success: false, 
+                error: 'MQTT handler not available' 
+            });
+        }
+
+        // Convert single deviceId to array for backward compatibility
+        const deviceIds = Array.isArray(deviceId) ? deviceId : [deviceId];
+
+        // Check if any device IDs are empty
+        if (deviceIds.some(id => !id || id.trim() === '')) {
+            return res.status(400).json({
+                success: false,
+                error: 'One or more invalid device IDs'
+            });
+        }
+
+        // Process updates for all devices
+        const updateResults = await Promise.all(
+            deviceIds.map(async (id) => {
+                try {
+                    console.log(`Sending firmware to device: ${id}`);
+                    // Send firmware directly through MQTT Handler
+                    await mqttHandler.sendFirmwareToDevice(id, firmwareId);
+                    return { deviceId: id, success: true };
+                } catch (error) {
+                    console.error(`Error updating device ${id}:`, error);
+                    return { 
+                        deviceId: id, 
+                        success: false, 
+                        error: error.message 
+                    };
+                }
+            })
+        );
+
+        // Check if any updates failed
+        const anyFailed = updateResults.some(result => !result.success);
+        if (anyFailed) {
+            return res.status(400).json({
+                success: false,
+                error: 'Some updates failed',
+                results: updateResults
+            });
+        }
+
+        return res.json({
+            success: true,
+            message: 'All firmware updates initiated successfully',
+            results: updateResults
+        });
+    } catch (error) {
+        console.error('Error updating firmware:', error);
+        return res.status(500).json({
+            success: false,
+            error: error.message || 'Failed to update firmware'
+        });
+    }
+};
+
+exports.revertFirmware = async (req, res) => {
+    try {
+        const { deviceId } = req.body;
+        
+        if (!deviceId) {
+            return res.status(400).json({ error: 'Device ID is required' });
+        }
+
+        const deviceResult = await getDeviceById(deviceId);
+        if (!deviceResult.success) {
+            return res.status(404).json({ error: 'Device not found' });
+        }
+
+        // Send revert command via MQTT
+        const mqttHandler = getMqttHandler();
+        if (!mqttHandler) {
+            return res.status(500).json({ error: 'MQTT handler not available' });
+        }
+
+        await mqttHandler.client.publish(
+            `cybiot/device/commands/${deviceId}`,
+            JSON.stringify({
+                action: 'revert_firmware'
+            }),
+            { qos: 1 }
+        );
+
+        res.json({ message: 'Revert command sent successfully' });
+    } catch (error) {
+        console.error('Error reverting firmware:', error);
+        res.status(500).json({ error: error.message || 'Failed to revert firmware' });
+    }
+};
+
 // Export all controller functions
 module.exports = { 
     addDevice, 
@@ -514,5 +704,7 @@ module.exports = {
     registerUnregisteredDevice,
     scheduleDeviceFirmwareUpdate: exports.scheduleDeviceFirmwareUpdate,
     sendFirmwareUpdate: exports.sendFirmwareUpdate,
-    getAvailableFirmwareForDevice: exports.getAvailableFirmwareForDevice
+    getAvailableFirmwareForDevice: exports.getAvailableFirmwareForDevice,
+    updateDeviceFirmware: exports.updateDeviceFirmware,
+    revertFirmware: exports.revertFirmware
 };

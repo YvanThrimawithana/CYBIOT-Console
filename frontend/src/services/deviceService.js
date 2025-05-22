@@ -66,13 +66,34 @@ export const getDevices = async () => {
 // New firmware-related functions
 export const updateDeviceFirmware = async (deviceIds, firmwareId) => {
     try {
+        if (!deviceIds || (Array.isArray(deviceIds) && deviceIds.length === 0)) {
+            throw new Error('Device ID is required');
+        }
+        
+        if (!firmwareId) {
+            throw new Error('Firmware ID is required');
+        }
+        
+        if (!Array.isArray(deviceIds)) {
+            deviceIds = [deviceIds]; // Convert single ID to array
+        }
+        
+        // Filter out any null, undefined or empty string values
+        const validDeviceIds = deviceIds.filter(id => id && id.trim() !== '');
+        
+        if (validDeviceIds.length === 0) {
+            throw new Error('No valid device IDs provided');
+        }
+        
         const response = await axios.post(`${API_URL}/update-firmware`, {
-            deviceIds,
+            deviceId: validDeviceIds,
             firmwareId
         });
+        
         return response.data;
     } catch (error) {
-        throw error.response ? error.response.data.error : "Network Error";
+        console.error('Firmware update error:', error);
+        throw new Error(error.response?.data?.error || 'Failed to update firmware');
     }
 };
 

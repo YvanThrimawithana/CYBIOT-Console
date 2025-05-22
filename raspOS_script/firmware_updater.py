@@ -109,43 +109,33 @@ class FirmwareUpdater:
                 self.handle_command_message(msg.payload)
         except Exception as e:
             logger.error(f"Error processing message: {e}")
-    
-    def handle_firmware_message(self, payload):
-        """Handle incoming firmware binary"""
+      def handle_firmware_message(self, payload):
+        """Handle incoming firmware messages"""
         try:
-            # Check if this is a firmware info message
-            if msg.topic.endswith('/info'):
-                logger.info("Received firmware info")
-                self.firmware_info = json.loads(payload.decode('utf-8'))
-                self.firmware_buffer = bytearray()
-                self.receiving_firmware = True
-                logger.info(f"Firmware info: {json.dumps(self.firmware_info, indent=2)}")
-                return
+            # Check if this is firmware info or data
+            if self.receiving_firmware:
+                # We're already receiving firmware, this must be the data
+                logger.info(f"Received firmware data: {len(payload)} bytes")
                 
-            # Handle chunk info
-            if msg.topic.endswith('/chunk'):
-                chunk_info = json.loads(payload.decode('utf-8'))
-                logger.info(f"Received chunk info: offset={chunk_info['offset']}/{chunk_info['totalSize']}")
-                return
-                
-            # Handle chunk data
-            if msg.topic.endswith('/data'):
-                if not self.receiving_firmware:
-                    logger.error("Received firmware chunk without firmware info")
-                    return
-                    
-                # Add chunk to buffer
+                # Store received data
                 self.firmware_buffer.extend(payload)
-                logger.info(f"Received chunk: {len(self.firmware_buffer)}/{self.firmware_info.get('size', 0)} bytes")
                 
-                # Check if we have all the data
+                # Check if we've received all the data
                 if len(self.firmware_buffer) >= self.firmware_info.get('size', 0):
                     logger.info("Firmware transfer complete")
                     
-                    # Verify hash
+                    # Generate hash for verification
                     received_hash = hashlib.sha256(self.firmware_buffer).hexdigest()
-                    if received_hash != self.firmware_info.get('hash', ''):
-                        logger.error(f"Hash mismatch: expected {self.firmware_info.get('hash')}, got {received_hash}")
+                    expected_hash = self.firmware_info.get('hash')
+                    
+                    if expected_hash and received_hash != expected_hash:
+                        logger.error(f"Hash mismatch: expected {expected_hash}, got {received_hash}")
+                        self.send_command_response({
+                            "action": "firmware_received",
+                            "status": "error",
+                            "error": "Hash verification failed"
+                        })
+                        self.receiving_firmware = False
                         return
                     
                     # Save firmware to file
@@ -159,47 +149,54 @@ class FirmwareUpdater:
                     
                     logger.info(f"Firmware saved to {firmware_file}")
                     
-                    # Check if update is scheduled
-                    if self.scheduled_update_time:
-                        logger.info(f"Update scheduled for {datetime.fromtimestamp(self.scheduled_update_time)}")
-                        
-                        # Calculate seconds until update
-                        now = time.time()
-                        delay = self.scheduled_update_time - now
-                        
-                        if delay <= 0:
-                            # Update immediately
-                            self.apply_firmware_update(firmware_file)
-                        else:
-                            # Schedule update
-                            logger.info(f"Update will be applied in {delay:.1f} seconds")
-                            threading.Timer(delay, self.apply_firmware_update, [firmware_file]).start()
-                    else:
-                        logger.info("Firmware received, but no update scheduled")
+                    # Send confirmation of successful storage
+                    self.send_command_response({
+                        "action": "firmware_received",
+                        "status": "success",
+                        "message": "Firmware stored successfully", 
+                        "details": {
+                            "name": self.firmware_info.get('name', 'unknown'),
+                            "version": self.firmware_info.get('version', 'unknown'),
+                            "size": len(self.firmware_buffer),
+                            "stored_at": firmware_file
+                        }
+                    })
                     
                     # Reset firmware receiving state
                     self.receiving_firmware = False
                     self.firmware_buffer = bytearray()
+            else:
+                # This must be firmware info
+                try:
+                    logger.info("Received firmware info")
+                    self.firmware_info = json.loads(payload.decode('utf-8'))
+                    self.firmware_buffer = bytearray()
+                    self.receiving_firmware = True
+                    
+                    logger.info(f"Firmware info received: {json.dumps(self.firmware_info, indent=2)}")
                     
                     # Send acknowledgement
                     self.send_command_response({
-                        "action": "firmware_received",
+                        "action": "firmware_info_received",
                         "status": "success",
-                        "firmware": {
-                            "name": self.firmware_info.get('name', 'unknown'),
-                            "version": self.firmware_info.get('version', 'unknown'),
-                            "size": len(self.firmware_buffer)
-                        }
+                        "message": "Ready to receive firmware data",
+                        "expected_size": self.firmware_info.get('size', 0)
                     })
-                
+                except json.JSONDecodeError as e:
+                    logger.error(f"Invalid firmware info format: {e}")
+                    self.send_command_response({
+                        "action": "firmware_info_received",
+                        "status": "error",
+                        "error": "Invalid firmware info format"
+                    })
         except Exception as e:
-            logger.error(f"Error processing firmware: {e}")
-            # Send error
+            logger.error(f"Error handling firmware message: {e}")
             self.send_command_response({
-                "action": "firmware_received",
+                "action": "firmware_error",
                 "status": "error",
                 "error": str(e)
             })
+            self.receiving_firmware = False
     
     def handle_command_message(self, payload):
         """Handle command messages"""

@@ -13,13 +13,15 @@ import fcntl
 import struct
 
 # Configuration
-MQTT_BROKER = "192.168.1.5"
+MQTT_BROKER = "192.168.1.5"  # Make sure this matches your backend MQTT broker IP
 MQTT_PORT = 1883
 MQTT_USER = "your_username"  # Optional
 MQTT_PASS = "your_password"  # Optional
 CLIENT_ID = "raspberrypi2w_" + os.uname()[1]  # Unique client ID
 HEARTBEAT_TOPIC = "cybiot/device/heartbeat"
-FIRMWARE_TOPIC = "cybiot/device/firmware/" + CLIENT_ID
+FIRMWARE_TOPIC_BASE = "cybiot/device/firmware/" + CLIENT_ID
+FIRMWARE_INFO_TOPIC = FIRMWARE_TOPIC_BASE + "/info"
+FIRMWARE_DATA_TOPIC = FIRMWARE_TOPIC_BASE + "/data"
 COMMAND_TOPIC = "cybiot/device/commands/" + CLIENT_ID
 HEARTBEAT_INTERVAL = 60  # seconds
 
@@ -57,8 +59,11 @@ def get_ip_address(interface='wlan0'):
 
 def on_connect(client, userdata, flags, rc, properties=None):
     print("Connected to MQTT broker with result code " + str(rc))
-    client.subscribe(FIRMWARE_TOPIC)
+    # Subscribe to the base topic for all firmware messages using wildcard
+    client.subscribe(FIRMWARE_TOPIC_BASE + "/#")
     client.subscribe(COMMAND_TOPIC)
+    print(f"Subscribed to firmware topics: {FIRMWARE_TOPIC_BASE}/#")
+    print(f"Subscribed to command topic: {COMMAND_TOPIC}")
     send_heartbeat()
 
 def on_message(client, userdata, msg):
@@ -82,29 +87,105 @@ def on_message(client, userdata, msg):
                     
         except Exception as e:
             print(f"Error processing command: {e}")
-    
-    elif msg.topic == FIRMWARE_TOPIC:
+      elif msg.topic.startswith(FIRMWARE_TOPIC_BASE):
         try:
-            # Save the received firmware
-            with open(NEW_FIRMWARE_PATH, 'wb') as f:
-                f.write(msg.payload)
+            print(f"Processing message on topic: {msg.topic}")
             
-            print("Firmware received. Verifying...")
-            
-            # Verify firmware (example: check size and hash)
-            firmware_info = json.loads(msg.payload[:msg.payload.find(b'\0')].decode())
-            firmware_data = msg.payload[msg.payload.find(b'\0')+1:]
-            
-            # Verify hash
-            md5_hash = hashlib.md5(firmware_data).hexdigest()
-            if md5_hash == firmware_info.get('hash'):
-                print("Firmware verification successful")
-                prepare_update()
+            # Determine if this is firmware info or binary data
+            if msg.topic == FIRMWARE_INFO_TOPIC:
+                print("Firmware info received")
+                try:
+                    firmware_info = json.loads(msg.payload.decode())
+                    
+                    # Store firmware info for later use
+                    global firmware_info_data
+                    firmware_info_data = firmware_info
+                    
+                    print(f"Firmware info: {json.dumps(firmware_info, indent=2)}")
+                    
+                    # Send confirmation back
+                    client.publish(COMMAND_TOPIC, json.dumps({
+                        "action": "firmware_info_received",
+                        "status": "success",
+                        "message": "Ready to receive firmware data",
+                        "device_id": CLIENT_ID
+                    }))
+                except Exception as e:
+                    print(f"Error processing firmware info: {e}")
+                    client.publish(COMMAND_TOPIC, json.dumps({
+                        "action": "firmware_error",
+                        "status": "error",
+                        "error": f"Error processing firmware info: {str(e)}",
+                        "device_id": CLIENT_ID
+                    }))
+                
+            elif msg.topic == FIRMWARE_DATA_TOPIC:
+                # This is the actual firmware binary data
+                print("Firmware data received")
+                
+                # Make sure firmware directory exists
+                os.makedirs(os.path.dirname(NEW_FIRMWARE_PATH), exist_ok=True)
+                
+                firmware_storage_path = os.path.join(
+                    os.path.dirname(NEW_FIRMWARE_PATH),
+                    f"firmware_{int(time.time())}.bin"
+                )
+                
+                # Save the received firmware
+                with open(firmware_storage_path, 'wb') as f:
+                    f.write(msg.payload)
+                
+                file_size = len(msg.payload)
+                print(f"Firmware data received and stored at: {firmware_storage_path} (Size: {file_size} bytes)")
+                
+                # Send confirmation back
+                client.publish(COMMAND_TOPIC, json.dumps({
+                    "action": "firmware_received",
+                    "status": "success",
+                    "message": "Firmware stored successfully",
+                    "device_id": CLIENT_ID,
+                    "storage_path": firmware_storage_path,
+                    "size": file_size
+                }))
+                
+                # If update is scheduled for now, process it
+                if update_scheduled and time.time() >= scheduled_update_time:
+                    print("Processing scheduled update")
+                    update_scheduled = False
+                    
+                    # Just store the firmware without applying any updates
+                    print("Firmware stored successfully (No update applied)")
             else:
-                print("Firmware verification failed - hash mismatch")
+                # Regular firmware topic (old format compatibility)
+                print("Firmware received (legacy format). Storing...")
+                
+                # Make sure firmware directory exists
+                os.makedirs(os.path.dirname(NEW_FIRMWARE_PATH), exist_ok=True)
+                
+                # Save the received firmware
+                with open(NEW_FIRMWARE_PATH, 'wb') as f:
+                    f.write(msg.payload)
+                
+                print(f"Firmware stored at: {NEW_FIRMWARE_PATH}")
+                
+                # Send confirmation back
+                client.publish(COMMAND_TOPIC, json.dumps({
+                    "action": "firmware_received",
+                    "status": "success",
+                    "message": "Firmware stored successfully (legacy format)",
+                    "device_id": CLIENT_ID
+                }))
+                
                 
         except Exception as e:
             print(f"Error processing firmware: {e}")
+            # Send error notification
+            client.publish(COMMAND_TOPIC, json.dumps({
+                "action": "firmware_error",
+                "status": "error",
+                "error": str(e),
+                "device_id": CLIENT_ID
+            }))
 
 def send_heartbeat():
     heartbeat_msg = {
