@@ -7,16 +7,18 @@ CybIoT is an IoT device management and security monitoring platform designed to 
 - Node.js (v16.x or higher)
 - MongoDB (v5.x or higher)
 - MQTT Broker (Mosquitto recommended)
+- Python 3.8+ (for Firmware Analyzer)
 - A modern web browser
 - npm or yarn package manager
 
 ## Project Structure
 
-The project consists of three main components:
+The project consists of four main components:
 
 - **Backend**: Express.js API server with MongoDB integration
 - **Frontend**: Next.js web application 
 - **RaspOS Scripts**: Scripts for IoT device management and firmware updates
+- **Firmware Analyzer**: Python-based tool for analyzing firmware security
 
 ## Installation
 
@@ -95,6 +97,47 @@ cd ../frontend
 npm install
 ```
 
+### 5. Firmware Analyzer Setup
+
+Navigate to the Firmware_Analyzer directory and install dependencies:
+
+```bash
+cd ../Firmware_Analyzer
+```
+
+#### Install Python Dependencies
+
+```bash
+# Create a virtual environment (recommended)
+python -m venv venv
+
+# Activate the virtual environment
+# On Windows:
+venv\Scripts\activate
+# On Linux/Mac:
+# source venv/bin/activate
+
+# Install required packages
+pip install binwalk flask flask-cors capstone numpy tqdm aiohttp asyncio lzma requests
+```
+
+#### Install System Dependencies
+
+The Firmware Analyzer requires some system tools:
+
+##### On Windows:
+```bash
+# Install via package managers like Chocolatey or download binaries:
+# Chocolatey: https://chocolatey.org/install
+choco install binwalk
+```
+
+##### On Linux:
+```bash
+sudo apt-get update
+sudo apt-get install binwalk readelf unsquashfs
+```
+
 ## Running the Application
 
 ### 1. Start MongoDB
@@ -127,6 +170,40 @@ npm run dev
 
 This will start the frontend application on http://localhost:3000.
 
+### 4. Running the Firmware Analyzer
+
+The Firmware Analyzer can be run in two modes: CLI mode or server mode.
+
+#### CLI Mode
+For analyzing a specific firmware file:
+
+```bash
+cd Firmware_Analyzer
+
+# Activate virtual environment if you created one
+venv\Scripts\activate  # Windows
+# source venv/bin/activate  # Linux/Mac
+
+# Run the analyzer on a firmware file
+python firmware_analyzer_server.py path/to/firmware.bin
+```
+
+#### Server Mode
+To run as a REST API server:
+
+```bash
+cd Firmware_Analyzer
+
+# Activate virtual environment if you created one
+venv\Scripts\activate  # Windows
+# source venv/bin/activate  # Linux/Mac
+
+# Run in server mode
+python firmware_analyzer_server.py --server --port 5001
+```
+
+This will start the analyzer server on http://localhost:5001, which can receive firmware files via POST requests to the `/analyze` endpoint.
+
 ## First Time Setup
 
 When you first run the application, a default admin user will be created:
@@ -144,6 +221,7 @@ When you first run the application, a default admin user will be created:
 - **Traffic Monitoring**: Monitor network traffic to detect anomalies
 - **Alerts & Notifications**: Receive alerts for suspicious activities
 - **User Management**: Manage platform users with role-based access control
+- **Firmware Analysis**: Analyze firmware for security vulnerabilities
 
 ## Device Integration
 
@@ -162,6 +240,18 @@ chmod +x install.sh
 ./install.sh
 ```
 
+## Firmware Analyzer Features
+
+The Firmware Analyzer provides:
+
+- Static analysis of firmware binaries
+- Detection of hardcoded credentials
+- Identification of vulnerable libraries
+- Command injection vulnerabilities
+- Weak/default credentials in password files
+- Dangerous configuration settings
+- Optional dynamic analysis in emulated environments
+
 ## Troubleshooting
 
 ### Backend Connection Issues
@@ -175,6 +265,12 @@ chmod +x install.sh
 - Verify the backend server is running and accessible
 - Check browser console for any CORS or connection errors
 - Ensure you're accessing the correct URL (http://localhost:3000)
+
+### Firmware Analyzer Issues
+
+- Make sure all dependencies are installed: `pip list | grep -E 'binwalk|capstone|flask|tqdm'`
+- Check if binwalk is in your system PATH: `binwalk --help`
+- For permission issues with extraction, try running with admin privileges
 
 ## Security Considerations
 
